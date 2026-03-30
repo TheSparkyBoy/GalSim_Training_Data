@@ -23,9 +23,8 @@ config = {
         'type': 'Single',
         'size': 1024,
         'pixel_scale': 10.0,
-        # RENAME THIS FROM world_orientation TO wcs
-        'wcs': {
-            'type': 'Tan', # This is the Tangent (Gnomonic) projection
+        'world_orientation': {
+            'type': 'Tan',
             'ra': f'{center_ra} deg',
             'dec': f'{center_dec} deg',
         },
@@ -33,7 +32,8 @@ config = {
         'nproc': 4 
     },
     'output': {
-        'file_name': 'orion_fixed_wcs.fits'
+        'file_name': 'orion_full_constellation.fits',
+        'dir': 'output_images' # Optional: folder name
     },
     'objects': {'type': 'List', 'items': []}
 }
