@@ -4,6 +4,9 @@ import numpy as np
 from astroquery.vizier import Vizier
 import astropy.coordinates as coord
 import astropy.units as u
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('GalSim')
 
 # --- PART 1: The Fast Data Pull ---
 print("Querying Orion stars...")
