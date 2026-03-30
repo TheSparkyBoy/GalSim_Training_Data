@@ -22,19 +22,21 @@ config = {
     'image': {
         'type': 'Single',
         'size': 1024,
-        'pixel_scale': 10.0,  # arcsec/pixel
+        'pixel_scale': 10.0,
         'world_orientation': {
-            'type': 'Tan', # Gnomonic Projection
+            'type': 'Tan',
             'ra': f'{center_ra} deg',
             'dec': f'{center_dec} deg',
         },
         'noise': {'type': 'Gaussian', 'sigma': 15.0},
-        'nproc': 4  # UTILIZE ALL PI 5 CORES
+        'nproc': 4 
     },
-    'objects': {
-        'type': 'List',
-        'items': []
-    }
+    # ADD THIS SECTION:
+    'output': {
+        'file_name': 'orion_full_constellation.fits',
+        'dir': 'output_images' # Optional: folder name
+    },
+    'objects': {'type': 'List', 'items': []}
 }
 
 # --- PART 3: Injecting the Stars into the Config ---
