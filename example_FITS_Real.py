@@ -38,8 +38,13 @@ config = {
 }
 
 # --- PART 3: Injecting the Stars into the Config ---
+# --- Updated Mapping Section ---
+# Use the exact names printed in your output: ['RA_ICRS', 'DE_ICRS', 'Gmag']
+
 for row in star_table:
-    mag = row['phot_g_mean_mag']
+    mag = row['Gmag']  # Changed from 'phot_g_mean_mag'
+    
+    # Standard flux conversion
     flux = 10**((10 - mag) / 2.5) * 5000
     
     star_obj = {
@@ -48,7 +53,7 @@ for row in star_table:
         'flux': flux,
         'world_pos': {
             'type': 'Celestial',
-            'ra': f"{row['RA_ICRS']} deg",
+            'ra': f"{row['RA_ICRS']} deg",  # Matching your printed colnames
             'dec': f"{row['DE_ICRS']} deg"
         }
     }
