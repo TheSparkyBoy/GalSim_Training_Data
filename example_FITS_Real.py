@@ -1,54 +1,64 @@
 import galsim
+import os
+import numpy as np
 from astroquery.vizier import Vizier
 import astropy.coordinates as coord
 import astropy.units as u
 
-# 1. Define the "Wide-Angle" Pin (Center of Orion's Body)
-# This point is roughly between the Belt and the Sword
-center_ra = 83.82    # ~05h 35m
-center_dec = -5.0    # Lowered to capture Rigel
-fov_radius = 12.0    # 12-degree radius = 24-degree total width
-
-# 2. Query Gaia for the Iconic Stars
-print(f"Querying Gaia for the entire Orion constellation...")
-# This keeps stars between Magnitude 2.0 (bright) and 6.5 (faint)
+# --- PART 1: The Fast Data Pull ---
+print("Querying Orion stars...")
 v = Vizier(columns=['RA_ICRS', 'DE_ICRS', 'phot_g_mean_mag'], 
-           column_filters={'phot_g_mean_mag': '2.0..6.5'})
-v.ROW_LIMIT = 5000
-
-result = v.query_region(coord.SkyCoord(ra=center_ra, dec=center_dec, unit=(u.deg, u.deg), frame='icrs'),
-                        radius=fov_radius * u.deg, 
-                        catalog='I/355/gaiadr3')
-
+           column_filters={'phot_g_mean_mag': '2.0..7.0'})
+v.TIMEOUT = 200
+center_ra, center_dec = 83.82, -5.0
+result = v.query_region(coord.SkyCoord(ra=center_ra, dec=center_dec, unit=(u.deg, u.deg)),
+                        radius=2.0 * u.deg, catalog='I/355/gaiadr3')
 star_table = result[0]
-print(f"Captured {len(star_table)} major stars in the Orion region.")
 
-# 3. Setup GalSim "Wide-Angle" Camera
-image_size = 1024
-# Calculation: (24 degrees * 3600") / 1024 pixels = ~84 arcsec/pixel
-pixel_scale = 84.0   
-affine = galsim.AffineTransform(pixel_scale, 0, 0, pixel_scale)
-wcs = galsim.TanWCS(affine, world_origin=galsim.CelestialCoord(center_ra * galsim.degrees, center_dec * galsim.degrees))
-full_image = galsim.ImageF(image_size, image_size, wcs=wcs)
+# --- PART 2: The GalSim Config Dictionary ---
+# This is the Python equivalent of the 'imsim-user.yaml'
+config = {
+    'image': {
+        'type': 'Single',
+        'size': 1024,
+        'pixel_scale': 10.0,  # arcsec/pixel
+        'world_orientation': {
+            'type': 'Tan', # Gnomonic Projection
+            'ra': f'{center_ra} deg',
+            'dec': f'{center_dec} deg',
+        },
+        'noise': {'type': 'Gaussian', 'sigma': 15.0},
+        'nproc': 4  # UTILIZE ALL PI 5 CORES
+    },
+    'objects': {
+        'type': 'List',
+        'items': []
+    }
+}
 
-# 4. Render the Constellation
+# --- PART 3: Injecting the Stars into the Config ---
 for row in star_table:
-    ra_val = row['RA_ICRS'] * galsim.degrees
-    dec_val = row['DE_ICRS'] * galsim.degrees
     mag = row['phot_g_mean_mag']
+    flux = 10**((10 - mag) / 2.5) * 5000
     
-    # Adjusting flux for the wide-angle view
-    flux = 10**((8 - mag) / 2.5) * 5000
-    
-    # We use a slightly larger sigma because we are zoomed way out
-    star_model = galsim.Gaussian(flux=flux, sigma=1.0)
-    star_coord = galsim.CelestialCoord(ra_val, dec_val)
-    
-    try:
-        star_model.drawImage(image=full_image, center=star_coord, add_to_image=True)
-    except galsim.GalSimError:
-        continue 
+    star_obj = {
+        'type': 'Gaussian',
+        'sigma': 1.2,
+        'flux': flux,
+        'world_pos': {
+            'type': 'Celestial',
+            'ra': f"{row['RA_ICRS']} deg",
+            'dec': f"{row['DE_ICRS']} deg"
+        }
+    }
+    config['objects']['items'].append(star_obj)
 
-# 5. Save
-full_image.write('full_orion_constellation.fits')
-print("Success! 'full_orion_constellation.fits' generated.")
+# --- PART 4: Run the Simulation ---
+print(f"Generating image with {len(star_table)} stars using 4 cores...")
+galsim.config.Process(config)
+
+# Note: In a 'Single' image config, GalSim writes to the filename 
+# specified in an 'output' block, or you can manually save:
+final_image = galsim.config.BuildImage(config)
+final_image.write('orion_config_example.fits')
+print("Done! View orion_config_example.fits")
