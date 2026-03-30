@@ -63,7 +63,15 @@ for row in star_table:
 
 # --- PART 4: Run the Simulation ---
 print(f"Generating image with {len(star_table)} stars using 4 cores...")
+# Create the directory if it doesn't exist
+if not os.path.exists('output_images'):
+    os.makedirs('output_images')
+
+# This one line handles the multi-core forking, the drawing, 
+# the noise, and the saving to the filename in the config.
 galsim.config.Process(config)
+
+print("Success! Check the output_images folder.")
 
 # Note: In a 'Single' image config, GalSim writes to the filename 
 # specified in an 'output' block, or you can manually save:
