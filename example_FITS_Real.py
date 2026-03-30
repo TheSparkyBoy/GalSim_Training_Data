@@ -4,9 +4,6 @@ import numpy as np
 from astroquery.vizier import Vizier
 import astropy.coordinates as coord
 import astropy.units as u
-import logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('GalSim')
 
 # --- PART 1: The Fast Data Pull ---
 print("Querying Orion stars...")
@@ -71,7 +68,7 @@ if not os.path.exists('output_images'):
 
 # This one line handles the multi-core forking, the drawing, 
 # the noise, and the saving to the filename in the config.
-galsim.config.Process(config, logger=logger)
+galsim.config.Process(config)
 
 print("Success! Check the output_images folder.")
 
