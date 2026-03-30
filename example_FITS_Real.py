@@ -11,9 +11,9 @@ fov_radius = 12.0    # 12-degree radius = 24-degree total width
 
 # 2. Query Gaia for the Iconic Stars
 print(f"Querying Gaia for the entire Orion constellation...")
-# We filter for stars brighter than Mag 7.5 to keep the iconic shape clear
+# This keeps stars between Magnitude 2.0 (bright) and 6.5 (faint)
 v = Vizier(columns=['RA_ICRS', 'DE_ICRS', 'phot_g_mean_mag'], 
-           column_filters={'phot_g_mean_mag': '<7.5'}) 
+           column_filters={'phot_g_mean_mag': '2.0..6.5'})
 v.ROW_LIMIT = 5000
 
 result = v.query_region(coord.SkyCoord(ra=center_ra, dec=center_dec, unit=(u.deg, u.deg), frame='icrs'),
