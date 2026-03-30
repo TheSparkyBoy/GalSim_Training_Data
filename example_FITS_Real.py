@@ -17,7 +17,7 @@ center_ra, center_dec = 83.82, -5.0
 result = v.query_region(coord.SkyCoord(ra=center_ra, dec=center_dec, unit=(u.deg, u.deg)),
                         radius=2.0 * u.deg, catalog='I/355/gaiadr3')
 star_table = result[0]
-print(star_table.colnames)
+print(star_table)
 
 # --- PART 2: The GalSim Config Dictionary ---
 # This is the Python equivalent of the 'imsim-user.yaml'
