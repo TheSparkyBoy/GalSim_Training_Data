@@ -68,7 +68,7 @@ if not os.path.exists('output_images'):
 
 # This one line handles the multi-core forking, the drawing, 
 # the noise, and the saving to the filename in the config.
-galsim.config.Process(config)
+galsim.config.Process(config, logger=logger)
 
 print("Success! Check the output_images folder.")
 
