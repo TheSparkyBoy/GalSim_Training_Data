@@ -6,6 +6,7 @@ import warnings
 import time
 import random
 import multiprocessing as mp
+import pandas as pd
 
 # CRITICAL FOR MULTIPROCESSING: Forces matplotlib to run in the background 
 # without trying to open GUI windows, preventing memory leaks and crashes.
@@ -23,30 +24,14 @@ warnings.filterwarnings('ignore')
 # --- 1. The Worker Function (Independent Telescope Node) ---
 def generate_single_image(args):
     """Each core downloads its own data and generates an image from start to finish."""
-    image_id, target_ra, target_dec, fov, output_dir = args
+    image_id, target_ra, target_dec, fov, master_table, output_dir = args
     
     # [ANTI-BAN MEASURE]: Stagger the network requests so Vizier doesn't block the Pi
     time.sleep(random.uniform(0.1, 3.0)) 
     
     process_start = time.time()
-    
-    # --- A. Fetch Localized Data ---
-    print(f"[Core] Image {image_id:04d} | Fetching stars around RA:{target_ra}, DEC:{target_dec}...")
-    v = Vizier(columns=['RA_ICRS', 'DE_ICRS', 'Gmag'], column_filters={'Gmag': '<5.0'}) 
-    v.TIMEOUT = 6000 
-    v.ROW_LIMIT = -1 
-    
-    try:
-        result = v.query_region(coord.SkyCoord(ra=target_ra, dec=target_dec, unit=(u.deg, u.deg)),
-                                radius=(fov * 0.75) * u.deg, catalog='I/355/gaiadr3')
-        
-        if len(result) == 0:
-            return f"[Core] Image {image_id:04d} FAILED: No stars found at RA:{target_ra}, DEC:{target_dec}"
-        star_table = result[0]
-    except Exception as e:
-        return f"[Core] Image {image_id:04d} FAILED: Network Error - {e}"
 
-    # --- B. Image Setup ---
+    # --- Image Setup ---
     image_size = 1024
     pixel_scale = (fov * 3600) / image_size 
     
@@ -68,7 +53,7 @@ def generate_single_image(args):
     label_data = []
     stars_drawn = 0
     
-    for i, row in enumerate(star_table):
+    for i, row in enumerate(master_table):
         ra_val = row['RA_ICRS'] * galsim.degrees
         dec_val = row['DE_ICRS'] * galsim.degrees
         mag = row['Gmag']
@@ -114,13 +99,22 @@ def generate_single_image(args):
 
 # --- Main Thread ---
 if __name__ == '__main__':
-    output_dir = 'dataset_universal'
+    output_dir = 'dataset_offline'
     os.makedirs(output_dir, exist_ok=True)
     
-    fov = 30.0 # Global Field of View for the camera
+    # --- 1. Load Local Cache ---
+    print("Loading Master Star Catalog from local solid-state drive...")
+    cache_file = "master_star_cache.csv"
     
-    # --- Define Universal Targets ---
-    # We are now pulling from entirely different parts of the celestial sphere
+    if not os.path.exists(cache_file):
+        print(f"ERROR: Cannot find {cache_file}. Run build_cache.py first!")
+        exit()
+        
+    master_df = pd.read_csv(cache_file)
+    print(f"--> Loaded {len(master_df)} stars into RAM instantly.\n")
+
+    # --- 2. Define Universal Targets ---
+    fov = 30.0 # Global Field of View for the camera
     image_targets = [
         (1, 83.82, -5.0),   # Orion's Belt
         (2, 101.28, -16.7), # Sirius (Canis Major)
@@ -135,7 +129,7 @@ if __name__ == '__main__':
     # Package the arguments for the workers
     tasks = []
     for (img_id, t_ra, t_dec) in image_targets:
-        tasks.append((img_id, t_ra, t_dec, fov, output_dir))
+        tasks.append((img_id, t_ra, t_dec, fov, master_df, output_dir))
         
     num_cores = mp.cpu_count()
     print(f"Firing up {num_cores} autonomous cores to generate {len(image_targets)} whole-sky images...")

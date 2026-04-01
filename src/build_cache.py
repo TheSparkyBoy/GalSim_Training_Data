@@ -7,7 +7,7 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-def build_local_cache(filename="master_star_cache.csv", max_magnitude=8.0):
+def build_local_cache(filename="GAIADR3_master_star_cache.csv", max_magnitude=8.0):
     print(f"Starting Whole-Sky Harvester (Mag < {max_magnitude})...")
     
     v = Vizier(columns=['RA_ICRS', 'DE_ICRS', 'Gmag'], column_filters={'Gmag': f'<{max_magnitude}'})
@@ -26,13 +26,15 @@ def build_local_cache(filename="master_star_cache.csv", max_magnitude=8.0):
         center = coord.SkyCoord(ra=180, dec=dec + 7.5, unit=(u.deg, u.deg))
         
         try:
+            start_time = time.time()
             # width=360 grabs the whole horizontal slice, height=15 grabs the vertical band
             result = v.query_region(center, width=360 * u.deg, height=15 * u.deg, catalog='I/355/gaiadr3')
+            end_time = time.time()
             
             if len(result) > 0:
                 table = result[0].to_pandas()
                 all_stars.append(table)
-                print(f"   -> Found {len(table)} stars.")
+                print(f"   -> Found {len(table)} stars. (Time: {end_time - start_time:.2f}s)")
             
         except Exception as e:
             print(f"   -> Error pulling band {dec}: {e}")
