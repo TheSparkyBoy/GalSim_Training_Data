@@ -24,22 +24,21 @@ warnings.filterwarnings('ignore')
 # --- 1. The Worker Function (Independent Telescope Node) ---
 def generate_single_image(args):
     """Each core downloads its own data and generates an image from start to finish."""
-    image_id, target_ra, target_dec, fov, master_table, output_dir = args
+    image_id, target_ra, target_dec, image_size_x, image_size_y, pixel_size_um, focal_length_mm, master_table, output_dir = args
     
     # [ANTI-BAN MEASURE]: Stagger the network requests so Vizier doesn't block the Pi
     time.sleep(random.uniform(0.1, 3.0)) 
     
     process_start = time.time()
-
-    # --- Image Setup ---
-    image_size = 1024
-    pixel_scale = (fov * 3600) / image_size 
+    
+    # 2. Calculate the true optical pixel scale (arcseconds per pixel)
+    pixel_scale = 648000/np.pi * (pixel_size_um / focal_length_mm)
     
     fits_filename = os.path.join(output_dir, f'starfield_{image_id:04d}.fits')
     csv_filename = os.path.join(output_dir, f'starfield_{image_id:04d}.csv')
     png_filename = os.path.join(output_dir, f'starfield_{image_id:04d}.png')
     
-    image = galsim.ImageF(image_size, image_size)
+    image = galsim.ImageF(image_size_x, image_size_y)
     
     # -pixel_scale on X-axis so RA increases to the LEFT
     affine = galsim.AffineTransform(pixel_scale, 0, 0, pixel_scale, origin=image.true_center)
@@ -61,7 +60,7 @@ def generate_single_image(args):
         if np.ma.is_masked(mag): continue
             
         flux = F0 * 10 ** ((-mag) / 2.5)
-        star = galsim.Gaussian(flux=flux, sigma=200)
+        star = galsim.Gaussian(flux=flux, sigma=100)
         
         world_pos = galsim.CelestialCoord(ra_val, dec_val)
         pixel_pos = wcs.toImage(world_pos)
@@ -96,15 +95,28 @@ def generate_single_image(args):
     process_duration = time.time() - process_start
     return f"Image {image_id:04d} | RA:{target_ra:6.2f}, DEC:{target_dec:6.2f} | Stars: {stars_drawn:4d} | Time: {process_duration:5.2f}s"
 
+def get_random_sky_coord():
+    """Generates a random point on the sky with uniform spherical distribution."""
+    ra = random.uniform(0.0, 360.0)
+    
+    # Dec requires a sine-distribution to avoid 'clustering' at the poles
+    z = random.uniform(-1.0, 1.0)
+    dec = np.degrees(np.arcsin(z))
+    
+    return round(ra, 4), round(dec, 4)
 
 # --- Main Thread ---
 if __name__ == '__main__':
-    output_dir = 'dataset_offline'
+    # Force the script to use the absolute base directory
+    base_dir = os.path.expanduser('~/GalSim')
+    
+    # Create the dedicated output folder inside ~/GalSim
+    output_dir = os.path.join(base_dir, 'training_data')
     os.makedirs(output_dir, exist_ok=True)
     
     # --- 1. Load Local Cache ---
     print("Loading Master Star Catalog from local solid-state drive...")
-    base_dir = os.path.expanduser('~/GalSim')
+    # Point explicitly to the catalog_cache folder where the ESA data lives
     cache_file = os.path.join(base_dir, "GAIADR3_master_star_cache.csv")
     
     if not os.path.exists(cache_file):
@@ -114,32 +126,30 @@ if __name__ == '__main__':
     master_df = pd.read_csv(cache_file)
     print(f"--> Loaded {len(master_df)} stars into RAM instantly.\n")
 
-    # --- 2. Define Universal Targets ---
-    fov = 30.0 # Global Field of View for the camera
-    image_targets = [
-        (1, 83.82, -5.0),   # Orion's Belt
-        (2, 101.28, -16.7), # Sirius (Canis Major)
-        (3, 201.36, -11.1), # Spica (Virgo)
-        (4, 279.23, 38.78), # Vega (Lyra)
-        (5, 15.00, 60.00),  # Cassiopeia region
-        (6, 180.00, 0.0),   # Celestial Equator
-        (7, 45.00, 89.0),   # Polaris (North Celestial Pole)
-        (8, 250.00, -60.0)  # Southern Hemisphere deep sky
-    ]
+    # --- 2. Define Random Targets ---
+    num_images_to_generate = 10  # <--- CHANGE THIS NUMBER TO GENERATE MORE!
+    # --- Image Setup (Real-World Optics) ---
+    image_size_x = 4000 # (Note: 2MP is usually 1920x1080, make sure this matches your crop/sensor output!)    
+    image_size_y = 3000 # (Note: 2MP is usually 1920x1080, make sure this matches your crop/sensor output!)    
+    # Your Physical Hardware Specs
+    pixel_size_um = 5.8 #microns (e.g., IMX482 has 5.8µm pixels)
+    focal_length_mm = 600  # <--- REPLACE THIS with the exact focal length of the lens attached to your IMX482
     
-    # Package the arguments for the workers
+    # Package the arguments for the workers using our new random math
     tasks = []
-    for (img_id, t_ra, t_dec) in image_targets:
-        tasks.append((img_id, t_ra, t_dec, fov, master_df, output_dir))
+    print(f"Calculating {num_images_to_generate} random spherical coordinates...")
+    
+    for img_id in range(1, num_images_to_generate + 1):
+        t_ra, t_dec = get_random_sky_coord()
+        tasks.append((img_id, t_ra, t_dec, image_size_x, image_size_y, pixel_size_um, focal_length_mm, master_df, output_dir))
         
     num_cores = mp.cpu_count()
-    print(f"Firing up {num_cores} autonomous cores to generate {len(image_targets)} whole-sky images...")
+    print(f"Firing up {num_cores} autonomous cores to generate {num_images_to_generate} whole-sky images...")
     
     generation_start = time.time()
     
     # --- Parallel Dispatch ---
     with mp.Pool(processes=num_cores) as pool:
-        # pool.imap_unordered prints the log the exact second a core finishes its specific image
         for log_message in pool.imap_unordered(generate_single_image, tasks):
             print(log_message)
             

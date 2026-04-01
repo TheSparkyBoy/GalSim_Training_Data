@@ -51,4 +51,4 @@ def build_local_cache(filename="GAIADR3_master_star_cache.csv", max_magnitude=5.
 
 if __name__ == '__main__':
     # You can safely push this to 9.0 or 10.0 if you want a massive dataset!
-    build_local_cache(max_magnitude=7.5)
+    build_local_cache(max_magnitude=8.0)
