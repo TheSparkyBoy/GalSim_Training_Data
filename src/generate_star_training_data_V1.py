@@ -53,7 +53,7 @@ def generate_single_image(args):
     label_data = []
     stars_drawn = 0
     
-    for i, row in enumerate(master_table):
+    for i, row in master_table.iterrows():
         ra_val = row['RA_ICRS'] * galsim.degrees
         dec_val = row['DE_ICRS'] * galsim.degrees
         mag = row['Gmag']
@@ -104,9 +104,10 @@ if __name__ == '__main__':
     
     # --- 1. Load Local Cache ---
     print("Loading Master Star Catalog from local solid-state drive...")
-    cache_file = os.path.join("GalSim", "master_star_cache.csv")
+    base_dir = os.path.expanduser('~/GalSim')
+    cache_file = os.path.join(base_dir, "GAIADR3_master_star_cache.csv")
     
-    if not os.path.exists("GalSim",cache_file):
+    if not os.path.exists(cache_file):
         print(f"ERROR: Cannot find {cache_file}. Run build_cache.py first!")
         exit()
         
