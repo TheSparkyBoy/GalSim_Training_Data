@@ -32,7 +32,7 @@ def generate_single_image(args):
     process_start = time.time()
     
     # 2. Calculate the true optical pixel scale (arcseconds per pixel)
-    pixel_scale = 648000/np.pi * (pixel_size_um / focal_length_mm)
+    pixel_scale = 206.264806247096355 * (pixel_size_um / focal_length_mm)
     
     fits_filename = os.path.join(output_dir, f'starfield_{image_id:04d}.fits')
     csv_filename = os.path.join(output_dir, f'starfield_{image_id:04d}.csv')
@@ -48,7 +48,7 @@ def generate_single_image(args):
     image.wcs = wcs
     
     # --- C. Draw Stars ---
-    F0 = 1e4 # Arbitrary flux for a 0-magnitude star in our synthetic system
+    F0 = 1e5 # Arbitrary flux for a 0-magnitude star in our synthetic system
     label_data = []
     stars_drawn = 0
     
@@ -60,7 +60,7 @@ def generate_single_image(args):
         if np.ma.is_masked(mag): continue
             
         flux = F0 * 10 ** ((-mag) / 2.5)
-        star = galsim.Gaussian(flux=flux, sigma=100)
+        star = galsim.Gaussian(flux=flux, sigma=20.0)
         
         world_pos = galsim.CelestialCoord(ra_val, dec_val)
         pixel_pos = wcs.toImage(world_pos)
@@ -73,7 +73,7 @@ def generate_single_image(args):
     # --- D. Sensor Noise ---
     image += 10.0 
     rng = galsim.BaseDeviate(image_id) # Unique static pattern per image
-    noise = galsim.GaussianNoise(rng, sigma=0.05)
+    noise = galsim.GaussianNoise(rng, sigma=0.01)
     image.addNoise(noise)
     
     # --- E. Export Files ---
@@ -129,10 +129,10 @@ if __name__ == '__main__':
     # --- 2. Define Random Targets ---
     num_images_to_generate = 10  # <--- CHANGE THIS NUMBER TO GENERATE MORE!
     # --- Image Setup (Real-World Optics) ---
-    image_size_x = 4000 # (Note: 2MP is usually 1920x1080, make sure this matches your crop/sensor output!)    
-    image_size_y = 3000 # (Note: 2MP is usually 1920x1080, make sure this matches your crop/sensor output!)    
+    image_size_x = 4144 # (Note: 2MP is usually 1920x1080, make sure this matches your crop/sensor output!)    
+    image_size_y = 2822 # (Note: 2MP is usually 1920x1080, make sure this matches your crop/sensor output!)    
     # Your Physical Hardware Specs
-    pixel_size_um = 5.8 #microns (e.g., IMX482 has 5.8µm pixels)
+    pixel_size_um = 4.64 #microns (e.g., IMX482 has 5.8µm pixels)
     focal_length_mm = 600  # <--- REPLACE THIS with the exact focal length of the lens attached to your IMX482
     
     # Package the arguments for the workers using our new random math
