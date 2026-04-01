@@ -42,14 +42,14 @@ def generate_single_image(args):
     image = galsim.ImageF(image_size, image_size)
     
     # -pixel_scale on X-axis so RA increases to the LEFT
-    affine = galsim.AffineTransform(-pixel_scale, 0, 0, pixel_scale, origin=image.true_center)
+    affine = galsim.AffineTransform(pixel_scale, 0, 0, pixel_scale, origin=image.true_center)
     world_origin = galsim.CelestialCoord(target_ra * galsim.degrees, target_dec * galsim.degrees)
     
     wcs = galsim.TanWCS(affine, world_origin=world_origin, units=galsim.arcsec)
     image.wcs = wcs
     
     # --- C. Draw Stars ---
-    F0 = 1e5 # Arbitrary flux for a 0-magnitude star in our synthetic system
+    F0 = 1e4 # Arbitrary flux for a 0-magnitude star in our synthetic system
     label_data = []
     stars_drawn = 0
     
@@ -61,7 +61,7 @@ def generate_single_image(args):
         if np.ma.is_masked(mag): continue
             
         flux = F0 * 10 ** ((-mag) / 2.5)
-        star = galsim.Gaussian(flux=flux, sigma=100)
+        star = galsim.Gaussian(flux=flux, sigma=200)
         
         world_pos = galsim.CelestialCoord(ra_val, dec_val)
         pixel_pos = wcs.toImage(world_pos)
@@ -74,7 +74,7 @@ def generate_single_image(args):
     # --- D. Sensor Noise ---
     image += 10.0 
     rng = galsim.BaseDeviate(image_id) # Unique static pattern per image
-    noise = galsim.GaussianNoise(rng, sigma=2.0)
+    noise = galsim.GaussianNoise(rng, sigma=0.05)
     image.addNoise(noise)
     
     # --- E. Export Files ---
