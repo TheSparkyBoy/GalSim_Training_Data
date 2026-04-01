@@ -49,7 +49,7 @@ def generate_single_image(args):
     image.wcs = wcs
     
     # --- C. Draw Stars ---
-    F0 = 1e6
+    F0 = 1e5 # Arbitrary flux for a 0-magnitude star in our synthetic system
     label_data = []
     stars_drawn = 0
     
@@ -104,9 +104,9 @@ if __name__ == '__main__':
     
     # --- 1. Load Local Cache ---
     print("Loading Master Star Catalog from local solid-state drive...")
-    cache_file = "master_star_cache.csv"
+    cache_file = os.path.join("GalSim", "master_star_cache.csv")
     
-    if not os.path.exists(cache_file):
+    if not os.path.exists("GalSim",cache_file):
         print(f"ERROR: Cannot find {cache_file}. Run build_cache.py first!")
         exit()
         
