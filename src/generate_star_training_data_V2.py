@@ -60,7 +60,7 @@ def generate_single_image(args):
         if np.ma.is_masked(mag): continue
             
         flux = F0 * 10 ** ((-mag) / 2.5)
-        star = galsim.Gaussian(flux=flux, sigma=20.0)
+        star = galsim.Gaussian(flux=flux, sigma=10.0)
         
         world_pos = galsim.CelestialCoord(ra_val, dec_val)
         pixel_pos = wcs.toImage(world_pos)
@@ -127,7 +127,7 @@ if __name__ == '__main__':
     print(f"--> Loaded {len(master_df)} stars into RAM instantly.\n")
 
     # --- 2. Define Random Targets ---
-    num_images_to_generate = 10  # <--- CHANGE THIS NUMBER TO GENERATE MORE!
+    num_images_to_generate = 1000  # <--- CHANGE THIS NUMBER TO GENERATE MORE!
     # --- Image Setup (Real-World Optics) ---
     image_size_x = 4144 # (Note: 2MP is usually 1920x1080, make sure this matches your crop/sensor output!)    
     image_size_y = 2822 # (Note: 2MP is usually 1920x1080, make sure this matches your crop/sensor output!)    
