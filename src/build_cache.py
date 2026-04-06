@@ -6,13 +6,14 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-def build_local_cache(filename="GAIADR3_master_star_cache.csv", max_magnitude=5.0):
+def build_local_cache(filename="GAIADR3_master_star_cache_12.csv", max_magnitude=5.0):
     print(f"Connecting to ESA Gaia Supercomputer (Mag < {max_magnitude})...")
     
     # ADQL (Astronomical Data Query Language)
     # We use 'AS' to perfectly match the column names your generator script expects
     query = f"""
-    SELECT ra AS "RA_ICRS", 
+    SELECT source_id,
+           ra AS "RA_ICRS", 
            dec AS "DE_ICRS", 
            phot_g_mean_mag AS "Gmag"
     FROM gaiadr3.gaia_source
@@ -51,4 +52,4 @@ def build_local_cache(filename="GAIADR3_master_star_cache.csv", max_magnitude=5.
 
 if __name__ == '__main__':
     # You can safely push this to 9.0 or 10.0 if you want a massive dataset!
-    build_local_cache(max_magnitude=10.0)
+    build_local_cache(max_magnitude=12.0)
