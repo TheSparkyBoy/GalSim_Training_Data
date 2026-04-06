@@ -125,7 +125,7 @@ def generate_single_image(args):
     image.addNoise(poisson_noise)
     
     # 2. Camera Electronics (Read Noise of the ASI585MM)
-    read_noise = galsim.GaussianNoise(rng, sigma=0.005)
+    read_noise = galsim.GaussianNoise(rng, sigma=0.7)
     image.addNoise(read_noise)
     
     # --- E. Export Files ---
@@ -169,7 +169,7 @@ if __name__ == '__main__':
     # --- 1. Load Local Cache ---
     print("Loading Master Star Catalog from local solid-state drive...")
     # Point explicitly to the catalog_cache folder where the ESA data lives
-    cache_file = os.path.join(base_dir, "GAIADR3_master_star_cache_10.csv")
+    cache_file = os.path.join(base_dir, "GAIADR3_master_star_cache_11.csv")
     
     if not os.path.exists(cache_file):
         print(f"ERROR: Cannot find {cache_file}. Run build_cache.py first!")

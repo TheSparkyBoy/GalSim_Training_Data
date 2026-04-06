@@ -18,7 +18,7 @@ Run the following command to install the entire pipeline in one go from the cond
 
 # Building Star Catalog
 Bash
-python src/build_cache.py
+python src/build_cache_GAIADR3.py
 
 Bash
 conda install -c conda-forge galsim astropy astroquery pandas matplotlib numpy -y
