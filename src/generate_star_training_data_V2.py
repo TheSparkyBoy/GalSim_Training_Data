@@ -64,19 +64,6 @@ def generate_single_image(args):
     center_x = image_size_x / 2.0
     center_y = image_size_y / 2.0
     max_radius = np.sqrt(center_x**2 + center_y**2) # Distance from center to the extreme corner
-
-    # --- CHROMATIC SETUP (Do this OUTSIDE the loop for speed) ---
-    
-    # 1. The Camera Filter (Bandpass)
-    # A standard refractor setup uses a UV/IR Cut filter to prevent bloat.
-    # We tell GalSim to simulate light from 400nm (Blue) to 700nm (Red) in 10nm chunks.
-    bandpass = galsim.Bandpass('1', wave_type='nm', blue_limit=400, red_limit=700).withStep(10)
-    
-    # 2. The Star Color (Spectral Energy Distribution)
-    # For a flawless dataset, you would read the 'BP-RP' color column from your Gaia CSV 
-    # and assign hot/cold profiles dynamically. For now, we will assign all stars 
-    # a standard G-type spectrum (5800K, like our Sun) to test the engine.
-    sed = galsim.SED(lambda wave: galsim.SED.blackbody(T=5800)(wave), wave_type='nm', flux_type='fphotons')
     
     for i, row in master_table.iterrows():
         real_star_id = int(row['source_id'])
@@ -122,7 +109,7 @@ def generate_single_image(args):
             )
             # 5. Build the physically accurate PSF for this exact pixel location
             optical_psf = galsim.OpticalPSF(
-                # lam=500.0,              #nm Wavelength of light (green)  
+                lam=500.0,              #nm Wavelength of light (green)  
                 diam=0.065,             #meter 65mm aperature        
                 defocus=global_defocus, # Focus is the same everywhere
                 spher=0.01,             # Spherical aberration is inherent to the glass
@@ -132,17 +119,10 @@ def generate_single_image(args):
                 coma2=edge_coma * np.sin(angle),
                 gsparams=high_accuracy_params
             )
-            # 6. The Chromatic Merge
-            # We multiply the physical glass distortion by the star's color profile,
-            # and then explicitly tell GalSim to set the flux *through our specific bandpass*.
-            chromatic_star = (optical_psf * sed).withFlux(flux, bandpass)
             
-            # 7. Draw it! Notice we must pass the bandpass into the drawImage command.
-            chromatic_star.drawImage(image=image, center=pixel_pos, add_to_image=True, method='phot', bandpass=bandpass)
-            
-            # star = optical_psf.withFlux(flux)
+            star = optical_psf.withFlux(flux)
             # star = galsim.Gaussian(flux=flux, sigma=0.85)
-            # star.drawImage(image=image, center=pixel_pos, add_to_image=True, method='phot')
+            star.drawImage(image=image, center=pixel_pos, add_to_image=True, method='phot')
                         
             label_data.append([
                 round(pixel_pos.x, 2), 
@@ -215,10 +195,10 @@ if __name__ == '__main__':
     # ==========================================
     # --- DATASET CONFIGURATION (CHANGE THESE!) ---
     # ==========================================
-    dataset_name = "optical_416mm_15sHQ"  # <--- Change this name for different experiments!
-    total_images_to_generate = 20       
+    dataset_name = "optical_gaiadr3_416mm_15s_mag10"  # <--- Change this name for different experiments!
+    total_images_to_generate = 1000       
     exposure_time = 15 # seconds
-    focal_length_mm = 416
+    focal_length_mm = 416 #416
     pixel_size_um = 2.9 
     image_size_x = 3840   
     image_size_y = 2160
@@ -236,7 +216,7 @@ if __name__ == '__main__':
     
     # --- 1. Load Local Cache ---
     print("Loading Master Star Catalog from local solid-state drive...")
-    cache_file = os.path.join(base_dir, "master_star_caches", "TYCHO2_master_star_cache_12.csv")
+    cache_file = os.path.join(base_dir, "master_star_caches", "GAIADR3_master_star_cache_10.csv")
     
     if not os.path.exists(cache_file):
         print(f"ERROR: Cannot find {cache_file}. Run build_cache.py first!")
