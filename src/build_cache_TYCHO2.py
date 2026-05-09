@@ -6,7 +6,8 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-def build_tycho2_cache(filename="TYCHO2_master_star_cache.csv", max_magnitude=8.0, chunk_size=30):
+def build_tycho2_cache(max_magnitude=8.0, chunk_size=30):
+    filename=("TYCHO2_master_star_cache_" + str(max_magnitude) + ".csv")
     print(f"Connecting to VizieR for Tycho-2 Catalog (Mag < {max_magnitude})...")
     
     # VizieR ID for Tycho-2
@@ -56,9 +57,9 @@ def build_tycho2_cache(filename="TYCHO2_master_star_cache.csv", max_magnitude=8.
         # --- The TYC to source_id Conversion ---
         # We mathematically fuse the 3 columns into a single unique integer.
         # Formula: (TYC1 * 1,000,000) + (TYC2 * 10) + TYC3
-        master_df['source_id'] = (master_df['TYC1'].astype(int) * 1000000) + \
-                                 (master_df['TYC2'].astype(int) * 10) + \
-                                 master_df['TYC3'].astype(int)
+        master_df['source_id'] = (master_df['TYC1'].astype('int64') * 1000000) + \
+                                 (master_df['TYC2'].astype('int64') * 10) + \
+                                 master_df['TYC3'].astype('int64')
         
         # Rename columns to match Gaia DR3 format exactly
         master_df = master_df.rename(columns={
@@ -71,8 +72,8 @@ def build_tycho2_cache(filename="TYCHO2_master_star_cache.csv", max_magnitude=8.
         master_df = master_df[['source_id', 'RA_ICRS', 'DE_ICRS', 'Gmag']]
         
         # --- Save to Hard Drive ---
-        base_dir = os.path.expanduser('~/GalSim')
-        filepath = os.path.join(base_dir, filename)
+        base_dir = os.path.expanduser('~/GalSim_Training_Data')
+        filepath = os.path.join(base_dir,'master_star_caches', filename)
         
         master_df.to_csv(filepath, index=False)
         
@@ -84,5 +85,5 @@ def build_tycho2_cache(filename="TYCHO2_master_star_cache.csv", max_magnitude=8.
         print("Error: No data was downloaded.")
 
 if __name__ == '__main__':
-    # Magnitude 8.0 pulls roughly the ~40,000 brightest stars in the sky
-    build_tycho2_cache(max_magnitude=8.0, chunk_size=30)
+    # Magnitude 12.0 pulls roughly the ~40,000 brightest stars in the sky
+    build_tycho2_cache(max_magnitude=11, chunk_size=30)

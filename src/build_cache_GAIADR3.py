@@ -58,9 +58,9 @@ def build_local_cache(filename="GAIADR3_master_star_cache.csv", max_magnitude=7.
         return
 
     # --- Save to Hard Drive ---
-    base_dir = os.path.expanduser('~/GalSim')
-    os.makedirs(base_dir, exist_ok=True)
-    filepath = os.path.join(base_dir, filename)
+    base_dir = os.path.expanduser('~/GalSim_Training_Data')
+    os.makedirs(os.path.join(base_dir, 'master_star_caches'), exist_ok=True)
+    filepath = os.path.join(base_dir, 'master_star_caches', filename)
     
     master_df.to_csv(filepath, index=False)
     
@@ -71,4 +71,4 @@ def build_local_cache(filename="GAIADR3_master_star_cache.csv", max_magnitude=7.
 
 if __name__ == '__main__':
     # A max_magnitude of 12.0 with a chunk size of 15 degrees is the sweet spot
-    build_local_cache(filename="GAIADR3_master_star_cache_13.csv", max_magnitude=13.0, chunk_size=15)
+    build_local_cache(filename="GAIADR3_master_star_cache_6.csv", max_magnitude=6.0, chunk_size=15)
