@@ -195,13 +195,13 @@ if __name__ == '__main__':
     # ==========================================
     # --- DATASET CONFIGURATION (CHANGE THESE!) ---
     # ==========================================
-    dataset_name = "optical_gaiadr3_416mm_15s_mag10"  # <--- Change this name for different experiments!
+    dataset_name = "opticalPSF_gaiadr3_200mm_15s_mag12"  # <--- Change this name for different experiments!
     total_images_to_generate = 1000       
     exposure_time = 15 # seconds
-    focal_length_mm = 416 #416
+    focal_length_mm = 200 #416
     pixel_size_um = 2.9 
-    image_size_x = 3840   
-    image_size_y = 2160
+    image_size_x = 1024 
+    image_size_y = 1024
     # ==========================================
     
     # --- Build the Isolated Dataset Folders ---
@@ -277,7 +277,7 @@ if __name__ == '__main__':
             global_img_id += 1
             images_queued += 1
         
-    num_cores = 10#mp.cpu_count()
+    num_cores = mp.cpu_count()
     print(f"\nFiring up {num_cores} autonomous cores for dataset: '{dataset_name}'...")
     
     generation_start = time.time()
