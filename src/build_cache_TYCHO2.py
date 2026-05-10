@@ -86,4 +86,4 @@ def build_tycho2_cache(max_magnitude=8.0, chunk_size=30):
 
 if __name__ == '__main__':
     # Magnitude 12.0 pulls roughly the ~40,000 brightest stars in the sky
-    build_tycho2_cache(max_magnitude=11, chunk_size=30)
+    build_tycho2_cache(max_magnitude=12, chunk_size=30)
