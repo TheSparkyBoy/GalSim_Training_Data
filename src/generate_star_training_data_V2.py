@@ -277,7 +277,7 @@ if __name__ == '__main__':
             global_img_id += 1
             images_queued += 1
         
-    num_cores = 10#mp.cpu_count()
+    num_cores = mp.cpu_count()
     print(f"\nFiring up {num_cores} autonomous cores for dataset: '{dataset_name}'...")
     
     generation_start = time.time()
