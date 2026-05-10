@@ -10,7 +10,7 @@ It is highly recommended to isolate these packages to prevent dependency conflic
 Bash
 # Create a new environment named 'galsim_env' running Python 3.10
 ```
-conda create -n galsim_env python=3.10 galsim astropy astroquery pandas matplotlib numpy -y
+conda create -n galsim_env -c conda-forge python=3.10 galsim astropy astroquery pandas matplotlib numpy -y
 ```
 # Activate the environment
 ```
