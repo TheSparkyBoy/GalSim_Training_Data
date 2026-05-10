@@ -216,7 +216,7 @@ if __name__ == '__main__':
     
     # --- 1. Load Local Cache ---
     print("Loading Master Star Catalog from local solid-state drive...")
-    cache_file = os.path.join(base_dir, "master_star_caches", "GAIADR3_master_star_cache_10.csv")
+    cache_file = os.path.join(base_dir, "master_star_caches", "GAIADR3_master_star_cache_12.csv")
     
     if not os.path.exists(cache_file):
         print(f"ERROR: Cannot find {cache_file}. Run build_cache.py first!")
