@@ -124,7 +124,8 @@ def generate_single_image(args):
             # star = galsim.Gaussian(flux=flux, sigma=0.85)
             star.drawImage(image=image, center=pixel_pos, add_to_image=True, method='phot')
                         
-            label_data.append([
+            label_data.append([\
+                round(real_star_id),
                 round(pixel_pos.x, 2), 
                 round(pixel_pos.y, 2), 
                 round(mag, 3), 
@@ -156,7 +157,7 @@ def generate_single_image(args):
     
     with open(csv_filename, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(['x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time'])
+        writer.writerow(['star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time'])
         writer.writerows(label_data)
         
     fig = plt.figure(dpi=300, figsize=(16, 9), facecolor='black')
@@ -195,7 +196,7 @@ if __name__ == '__main__':
     # ==========================================
     # --- DATASET CONFIGURATION (CHANGE THESE!) ---
     # ==========================================
-    dataset_name = "opticalPSF_gaiadr3_150mm_15s_mag12"  # <--- Change this name for different experiments!
+    dataset_name = "opticalPSF_gaiadr3_150mm_15s_mag11"  # <--- Change this name for different experiments!
     total_images_to_generate = 1000       
     exposure_time = 15 # seconds
     focal_length_mm = 150 #416
@@ -216,7 +217,7 @@ if __name__ == '__main__':
     
     # --- 1. Load Local Cache ---
     print("Loading Master Star Catalog from local solid-state drive...")
-    cache_file = os.path.join(base_dir, "master_star_caches", "GAIADR3_master_star_cache_12.csv")
+    cache_file = os.path.join(base_dir, "master_star_caches", "GAIADR3_master_star_cache_11.csv")
     
     if not os.path.exists(cache_file):
         print(f"ERROR: Cannot find {cache_file}. Run build_cache.py first!")
