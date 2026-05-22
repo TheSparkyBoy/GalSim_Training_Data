@@ -24,10 +24,7 @@ warnings.filterwarnings('ignore')
 # --- 1. The Worker Function (Independent Telescope Node) ---
 def generate_single_image(args):
     """Each core downloads its own data and generates an image from start to finish."""
-    image_id, target_ra, target_dec, image_size_x, image_size_y, pixel_size_um, focal_length_mm, exposure_time, master_table, fits_dir, png_dir, csv_dir = args
-    
-    # [ANTI-BAN MEASURE]: Stagger the network requests so Vizier doesn't block the Pi
-    time.sleep(random.uniform(0.1, 3.0)) 
+    image_id, target_ra, target_dec, camera_roll_degrees, image_size_x, image_size_y, pixel_size_um, focal_length_mm, exposure_time, master_table, fits_dir, png_dir, csv_dir = args
     
     process_start = time.time()
     
@@ -42,8 +39,16 @@ def generate_single_image(args):
     
     image = galsim.ImageF(image_size_x, image_size_y)
     
-    # -pixel_scale on X-axis so RA increases to the LEFT
-    affine = galsim.AffineTransform(pixel_scale, 0, 0, pixel_scale, origin=image.true_center)
+    # --- CAMERA ROLL MATH ---
+    theta = np.radians(camera_roll_degrees)
+    
+    dudx = pixel_scale * np.cos(theta)
+    dudy = -pixel_scale * np.sin(theta)
+    dvdx = pixel_scale * np.sin(theta)
+    dvdy = pixel_scale * np.cos(theta)
+    
+    affine = galsim.AffineTransform(dudx, dudy, dvdx, dvdy, origin=image.true_center)
+
     world_origin = galsim.CelestialCoord(target_ra * galsim.degrees, target_dec * galsim.degrees)
     
     wcs = galsim.TanWCS(affine, world_origin=world_origin, units=galsim.arcsec)
@@ -136,7 +141,7 @@ def generate_single_image(args):
 
     # --- D. Sensor Noise ---
     image += 10.0 # background level
-    rng = galsim.BaseDeviate(image_id) 
+    rng = galsim.BaseDeviate(image_id)
     
     # 1. Physics of Light (Shot Noise based on background level)
     poisson_noise = galsim.PoissonNoise(rng)
@@ -160,10 +165,17 @@ def generate_single_image(args):
         writer.writerow(['star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time'])
         writer.writerows(label_data)
         
+    # --- PNG VISIBILITY FIX ---
     fig = plt.figure(dpi=300, figsize=(16, 9), facecolor='black')
     img_array = image.array
-    plt.imshow(img_array, cmap='gray', origin='lower', norm=LogNorm(vmin=10, vmax=np.percentile(img_array, 99.9)))
-    plt.title(f'Image {image_id:04d} (RA:{target_ra:.2f}, DEC:{target_dec:.2f})', color='white')
+    
+    dynamic_vmin = max(1.0, np.percentile(img_array, 1))
+    dynamic_vmax = np.max(img_array)
+    if dynamic_vmax <= dynamic_vmin:
+        dynamic_vmax = dynamic_vmin + 10.0
+        
+    plt.imshow(img_array, cmap='gray', origin='lower', norm=LogNorm(vmin=dynamic_vmin, vmax=dynamic_vmax), interpolation='none')
+    plt.title(f'Image {image_id:07d} (RA:{target_ra:.2f}, DEC:{target_dec:.2f} | Roll: {camera_roll_degrees:.1f}deg)', color='white')
     plt.axis('off')
     plt.savefig(png_filename, bbox_inches='tight', facecolor='black')
     plt.close(fig)
@@ -173,6 +185,7 @@ def generate_single_image(args):
         'image_id': f'{image_id:07d}',
         'ra': target_ra,
         'dec': target_dec,
+        'roll': camera_roll_degrees,
         'fov_x': round(fov_x, 2),
         'fov_y': round(fov_y, 2),
         'stars_drawn': stars_drawn,
@@ -197,11 +210,13 @@ if __name__ == '__main__':
     # --- DATASET CONFIGURATION (CHANGE THESE!) ---
     # ==========================================
     dataset_name = "opticalPSF_gaiadr3_150mm_15s_mag11"  # <--- Change this name for different experiments!
-    total_images_to_generate = 1000       
+    total_images_to_generate = 8
     exposure_time = 15 # seconds
     focal_length_mm = 150 #416
+    roll = 10.0 # degrees 
+    # roll = random.uniform(0.0, 360.0) # Randomize roll for AI robustness
     pixel_size_um = 2.9 
-    image_size_x = 1024 
+    image_size_x = 1024
     image_size_y = 1024
     # ==========================================
     
@@ -262,8 +277,8 @@ if __name__ == '__main__':
     for t_ra, t_dec in well_known_targets:
         if images_queued >= total_images_to_generate:
             break
-            
-        tasks.append((global_img_id, t_ra, t_dec, image_size_x, image_size_y, pixel_size_um, focal_length_mm, exposure_time, master_df, fits_dir, png_dir, csv_dir))
+
+        tasks.append((global_img_id, t_ra, t_dec, roll, image_size_x, image_size_y, pixel_size_um, focal_length_mm, exposure_time, master_df, fits_dir, png_dir, csv_dir))
         global_img_id += 1
         images_queued += 1
 
@@ -274,7 +289,7 @@ if __name__ == '__main__':
         
         while images_queued < total_images_to_generate:
             t_ra, t_dec = get_random_sky_coord()
-            tasks.append((global_img_id, t_ra, t_dec, image_size_x, image_size_y, pixel_size_um, focal_length_mm, exposure_time, master_df, fits_dir, png_dir, csv_dir))
+            tasks.append((global_img_id, t_ra, t_dec, roll, image_size_x, image_size_y, pixel_size_um, focal_length_mm, exposure_time, master_df, fits_dir, png_dir, csv_dir))
             global_img_id += 1
             images_queued += 1
         
@@ -288,7 +303,7 @@ if __name__ == '__main__':
     with mp.Pool(processes=num_cores) as pool:
         for result in pool.imap_unordered(generate_single_image, tasks):
             # Print the success log to the terminal
-            print(f"Image {result['image_id']} | FOV: {result['fov_x']}x{result['fov_y']} deg | RA:{result['ra']:6.2f}, DEC:{result['dec']:6.2f} | Stars: {result['stars_drawn']:4d} | Time: {result['time_s']}s")
+            print(f"Image {result['image_id']} | Roll: {result['roll']:6.2f} | RA:{result['ra']:6.2f}, DEC:{result['dec']:6.2f} | Stars: {result['stars_drawn']:4d} | Time: {result['time_s']}s")
             
             # Append the global metadata to our Manifest list
             manifest_data.append({
@@ -296,6 +311,7 @@ if __name__ == '__main__':
                 'dataset_group': dataset_name,
                 'ra': result['ra'],
                 'dec': result['dec'],
+                'camera_roll': result['roll'],
                 'focal_length_mm': focal_length_mm,
                 'exposure_time_s': exposure_time,
                 'total_stars': result['stars_drawn']
