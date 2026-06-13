@@ -75,17 +75,35 @@ def generate_single_image(args):
     box_width = 5.0
     box_height = 5.0
     n_px = box_width * box_height
-    margin = 2.0
+    margin = 2.0 #two pixel around the bounding box
     total_width = box_width + (2 * margin)
     total_height = box_height + (2 * margin)
     n_b = (total_width * total_height) - n_px
+    # 1. Define the radius of the inner star circle
+    star_radius = 2.5 # pixels
+    
+    # # 2. Calculate n_px (Area of a circle: pi * r^2)
+    # n_px = np.pi * (star_radius ** 2)
+    
+    # # 3. Define the inner and outer radii of the background donut
+    # # We leave a small "gap" between the star and the background ring so star glow doesn't bleed into our background math!
+    # bg_inner_radius = 4.0 
+    # bg_outer_radius = 7.0 
+    
+    # # 4. Calculate n_b (Area of outer circle MINUS Area of inner circle)
+    # n_b = (np.pi * (bg_outer_radius ** 2)) - (np.pi * (bg_inner_radius ** 2))
+    
+    # # 5. The penalty term calculates perfectly!
+    # bg_penalty = 1.0 + (n_px / n_b)
+
     bg_penalty = 1.0 + (n_px / n_b)
     N_S = 10.0  # Your sky background
     N_R = 0.7   # Your read noise
     quantization_variance = 1.0 / 12.0
 
     # A = n_px * bg_penalty * (Sky + Dark + Read^2 + Quantization)
-    A_term = n_px * bg_penalty * (N_S + 0.0 + (N_R**2) + quantization_variance)
+    G = 1.0 # Electrons per ADU (Assuming gain of 1 for simplicity)
+    A_term = n_px * bg_penalty * (N_S + 0.0 + (N_R**2) + quantization_variance*(G**2))
     
     for i, row in master_table.iterrows():
         real_star_id = int(row['source_id'])
@@ -235,15 +253,14 @@ if __name__ == '__main__':
     GLOBAL_SEED = 42
     mode = "opticalPSF_"
     total_images_to_generate = 12
-    exposure_time = 0.1 # seconds
+    exposure_time = 0.3 # seconds
     focal_length_mm = 150 #416
     roll = 0 # degrees 
-    # roll = random.uniform(0.0, 360.0) # Randomize roll for AI robustness
     pixel_size_um = 2.9 
     image_size_x = 1024
     image_size_y = 1024
     fov = round(206.264806247096355 * (pixel_size_um / focal_length_mm) * image_size_x / 3600.0, 2) # degrees
-    dataset_name = mode + "gaiadr3_" + "global_seed_" + str(GLOBAL_SEED)+ "_fov_" + str(fov) + "size_x" + str(image_size_x) + "size_y" + str(image_size_y) + "_pxlsz_" + str(pixel_size_um) + "um_" + str(focal_length_mm) + "mm_" + str(exposure_time) + \
+    dataset_name = mode + "gaiadr3_" + "global_seed_" + str(GLOBAL_SEED)+ "_fov_" + str(fov) + "size_x_" + str(image_size_x) + "size_y_" + str(image_size_y) + "_pxlsz_" + str(pixel_size_um) + "um_" + str(focal_length_mm) + "mm_" + str(exposure_time) + \
     "s_" + "mag11_" + "roll" + str(roll) + "deg" + "_5seconds"
     # ==========================================
 
