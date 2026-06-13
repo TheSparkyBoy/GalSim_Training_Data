@@ -61,14 +61,31 @@ def generate_single_image(args):
     F0 = universal_baseline * aperature_area_cm2 * exposure_time * quantum_efficiency # Approximately Aperature Area (33.18cm^2) * Exposure Time (30s) * Quantum Efficiency (10,000photons/s)
     label_data = []
     stars_drawn = 0
+    star_snr_list = [] # [NEW] Keep track of SNRs for the image median
 
     # 1. Global Focus: The lens has one focus position for the entire image
     global_defocus = random.uniform(-0.04, 0.04)
 
-    # 2. Find the optical center of your 3840x2160 sensor
+    # 2. Find the optical center of your sensor
     center_x = image_size_x / 2.0
     center_y = image_size_y / 2.0
     max_radius = np.sqrt(center_x**2 + center_y**2) # Distance from center to the extreme corner
+
+    # Assuming a 5x5 pixel bounding box, and a 100 pixel background ring
+    box_width = 5.0
+    box_height = 5.0
+    n_px = box_width * box_height
+    margin = 2.0
+    total_width = box_width + (2 * margin)
+    total_height = box_height + (2 * margin)
+    n_b = (total_width * total_height) - n_px
+    bg_penalty = 1.0 + (n_px / n_b)
+    N_S = 10.0  # Your sky background
+    N_R = 0.7   # Your read noise
+    quantization_variance = 1.0 / 12.0
+
+    # A = n_px * bg_penalty * (Sky + Dark + Read^2 + Quantization)
+    A_term = n_px * bg_penalty * (N_S + 0.0 + (N_R**2) + quantization_variance)
     
     for i, row in master_table.iterrows():
         real_star_id = int(row['source_id'])
@@ -128,6 +145,8 @@ def generate_single_image(args):
             star = optical_psf.withFlux(flux)
             # star = galsim.Gaussian(flux=flux, sigma=0.85)
             star.drawImage(image=image, center=pixel_pos, add_to_image=True, method='phot')
+            star_snr = flux / np.sqrt(flux + A_term)
+            star_snr_list.append(star_snr)
                         
             label_data.append([\
                 round(real_star_id),
@@ -135,7 +154,8 @@ def generate_single_image(args):
                 round(pixel_pos.y, 2), 
                 round(mag, 3), 
                 focal_length_mm, 
-                exposure_time
+                exposure_time,
+                round(star_snr, 2)
             ])            
             stars_drawn += 1
 
@@ -143,17 +163,17 @@ def generate_single_image(args):
     image += 10.0 # background level
     rng = galsim.BaseDeviate(image_id)
     
-    # 1. Physics of Light (Shot Noise based on background level)
+    # # 1. Physics of Light (Shot Noise based on background level)
     poisson_noise = galsim.PoissonNoise(rng)
     image.addNoise(poisson_noise)
     
-    # 2. Camera Electronics (Read Noise of the ASI585MM)
+    # # 2. Camera Electronics (Read Noise of the ASI585MM)
     read_noise = galsim.GaussianNoise(rng, sigma=0.7)
     image.addNoise(read_noise)
 
-    # 3. Analog-to-Digital Conversion
-    # The ASI585 uses a 12-bit ADC. We quantize the continuous electron 
-    # decimals into discrete integer ADU steps, capping at absolute white (4095).
+    # # 3. Analog-to-Digital Conversion
+    # # The ASI585 uses a 12-bit ADC. We quantize the continuous electron 
+    # # decimals into discrete integer ADU steps, capping at absolute white (4095).
     image.quantize()
     image.array[image.array > 4095] = 4095
     
@@ -162,7 +182,7 @@ def generate_single_image(args):
     
     with open(csv_filename, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(['star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time'])
+        writer.writerow(['star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time', 'snr'])
         writer.writerows(label_data)
         
     # --- PNG VISIBILITY FIX ---
@@ -179,6 +199,8 @@ def generate_single_image(args):
     plt.axis('off')
     plt.savefig(png_filename, bbox_inches='tight', facecolor='black')
     plt.close(fig)
+
+    image_median_snr = round(np.median(star_snr_list), 2) if star_snr_list else 0.0
     
     process_duration = time.time() - process_start
     return {
@@ -189,6 +211,7 @@ def generate_single_image(args):
         'fov_x': round(fov_x, 2),
         'fov_y': round(fov_y, 2),
         'stars_drawn': stars_drawn,
+        'median_snr': image_median_snr,
         'time_s': round(process_duration, 2)
     }
 
@@ -209,16 +232,24 @@ if __name__ == '__main__':
     # ==========================================
     # --- DATASET CONFIGURATION (CHANGE THESE!) ---
     # ==========================================
-    dataset_name = "opticalPSF_gaiadr3_150mm_15s_mag11"  # <--- Change this name for different experiments!
-    total_images_to_generate = 8
-    exposure_time = 15 # seconds
+    GLOBAL_SEED = 42
+    mode = "opticalPSF_"
+    total_images_to_generate = 12
+    exposure_time = 0.1 # seconds
     focal_length_mm = 150 #416
-    roll = 10.0 # degrees 
+    roll = 0 # degrees 
     # roll = random.uniform(0.0, 360.0) # Randomize roll for AI robustness
     pixel_size_um = 2.9 
     image_size_x = 1024
     image_size_y = 1024
+    fov = round(206.264806247096355 * (pixel_size_um / focal_length_mm) * image_size_x / 3600.0, 2) # degrees
+    dataset_name = mode + "gaiadr3_" + "global_seed_" + str(GLOBAL_SEED)+ "_fov_" + str(fov) + "size_x" + str(image_size_x) + "size_y" + str(image_size_y) + "_pxlsz_" + str(pixel_size_um) + "um_" + str(focal_length_mm) + "mm_" + str(exposure_time) + \
+    "s_" + "mag11_" + "roll" + str(roll) + "deg" + "_5seconds"
     # ==========================================
+
+    # --- Seed the main thread ---
+    random.seed(GLOBAL_SEED)
+    np.random.seed(GLOBAL_SEED)
     
     # --- Build the Isolated Dataset Folders ---
     dataset_dir = os.path.join(base_dir, 'training_data', dataset_name)
@@ -303,7 +334,7 @@ if __name__ == '__main__':
     with mp.Pool(processes=num_cores) as pool:
         for result in pool.imap_unordered(generate_single_image, tasks):
             # Print the success log to the terminal
-            print(f"Image {result['image_id']} | Roll: {result['roll']:6.2f} | RA:{result['ra']:6.2f}, DEC:{result['dec']:6.2f} | Stars: {result['stars_drawn']:4d} | Time: {result['time_s']}s")
+            print(f"Image {result['image_id']} | Roll: {result['roll']:6.2f} | Stars: {result['stars_drawn']:4d} | Med. SNR: {result['median_snr']} | Time: {result['time_s']}s")
             
             # Append the global metadata to our Manifest list
             manifest_data.append({
@@ -314,7 +345,8 @@ if __name__ == '__main__':
                 'camera_roll': result['roll'],
                 'focal_length_mm': focal_length_mm,
                 'exposure_time_s': exposure_time,
-                'total_stars': result['stars_drawn']
+                'total_stars': result['stars_drawn'],
+                'median_image_snr': result['median_snr']
             })
             
     # --- Save the Master Manifest ---
