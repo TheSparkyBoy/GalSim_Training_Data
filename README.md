@@ -8,6 +8,18 @@ Step 1: Create a Dedicated Environment
 It is highly recommended to isolate these packages to prevent dependency conflicts.
 
 Bash
+
+# Install conda for linux arm
+```
+wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh
+bash Miniforge3-Linux-aarch64.sh
+```
+
+# Accept Terms of Service
+```
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+```
 # Create a new environment named 'galsim_env' running Python 3.10
 ```
 conda create -n galsim_env -c conda-forge python=3.10 galsim astropy astroquery pandas matplotlib numpy -y
