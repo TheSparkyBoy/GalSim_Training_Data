@@ -234,7 +234,7 @@ if __name__ == '__main__':
     # ==========================================
     GLOBAL_SEED = 42
     mode = "opticalPSF_"
-    total_images_to_generate = 12
+    total_images_to_generate = 250
     exposure_time = 0.1 # seconds
     focal_length_mm = 150 #416
     roll = 0 # degrees 
