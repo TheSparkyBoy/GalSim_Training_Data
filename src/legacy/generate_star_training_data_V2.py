@@ -72,38 +72,30 @@ def generate_single_image(args):
     max_radius = np.sqrt(center_x**2 + center_y**2) # Distance from center to the extreme corner
 
     # Assuming a 5x5 pixel bounding box, and a 100 pixel background ring
-    box_width = 5.0
-    box_height = 5.0
-    n_px = box_width * box_height
-    margin = 2.0 #two pixel around the bounding box
-    total_width = box_width + (2 * margin)
-    total_height = box_height + (2 * margin)
-    n_b = (total_width * total_height) - n_px
-    # 1. Define the radius of the inner star circle
+    # box_width = 5.0
+    # box_height = 5.0
+    # n_px = box_width * box_height
+    # margin = 2.0 #two pixel around the bounding box
+    # total_width = box_width + (2 * margin)
+    # total_height = box_height + (2 * margin)
+    # n_b = (total_width * total_height) - n_px
+
+    # Assuming 2.5 pixel radius for bounding circle
     star_radius = 2.5 # pixels
-    
-    # # 2. Calculate n_px (Area of a circle: pi * r^2)
-    # n_px = np.pi * (star_radius ** 2)
-    
-    # # 3. Define the inner and outer radii of the background donut
-    # # We leave a small "gap" between the star and the background ring so star glow doesn't bleed into our background math!
-    # bg_inner_radius = 4.0 
-    # bg_outer_radius = 7.0 
-    
-    # # 4. Calculate n_b (Area of outer circle MINUS Area of inner circle)
-    # n_b = (np.pi * (bg_outer_radius ** 2)) - (np.pi * (bg_inner_radius ** 2))
-    
-    # # 5. The penalty term calculates perfectly!
-    # bg_penalty = 1.0 + (n_px / n_b)
+    n_px = np.pi * (star_radius ** 2)
+    bg_inner_radius = 4.0 
+    bg_outer_radius = 7.0 
+    n_b = (np.pi * (bg_outer_radius ** 2)) - (np.pi * (bg_inner_radius ** 2))
 
     bg_penalty = 1.0 + (n_px / n_b)
     N_S = 10.0  # Your sky background
     N_R = 0.7   # Your read noise
+    N_D = 0.0   # Dark noise
     quantization_variance = 1.0 / 12.0
 
     # A = n_px * bg_penalty * (Sky + Dark + Read^2 + Quantization)
     G = 1.0 # Electrons per ADU (Assuming gain of 1 for simplicity)
-    A_term = n_px * bg_penalty * (N_S + 0.0 + (N_R**2) + quantization_variance*(G**2))
+    A_term = n_px * bg_penalty * (N_S + N_D + (N_R**2) + quantization_variance*(G**2))
     
     for i, row in master_table.iterrows():
         real_star_id = int(row['source_id'])
@@ -250,13 +242,13 @@ if __name__ == '__main__':
     # ==========================================
     # --- DATASET CONFIGURATION (CHANGE THESE!) ---
     # ==========================================
-    GLOBAL_SEED = 42
+    GLOBAL_SEED = 50
     mode = "opticalPSF_"
-    total_images_to_generate = 12
-    exposure_time = 0.3 # seconds
-    focal_length_mm = 150 #416
+    total_images_to_generate = 250
+    exposure_time = 1 # seconds
+    focal_length_mm = 400 #416
     roll = 0 # degrees 
-    pixel_size_um = 2.9 
+    pixel_size_um = 2.9
     image_size_x = 1024
     image_size_y = 1024
     fov = round(206.264806247096355 * (pixel_size_um / focal_length_mm) * image_size_x / 3600.0, 2) # degrees
@@ -280,7 +272,7 @@ if __name__ == '__main__':
     
     # --- 1. Load Local Cache ---
     print("Loading Master Star Catalog from local solid-state drive...")
-    cache_file = os.path.join(base_dir, "master_star_caches", "GAIADR3_master_star_cache_11.csv")
+    cache_file = os.path.join(base_dir, "master_star_caches", "GAIADR3_master_star_cache_12.csv")
     
     if not os.path.exists(cache_file):
         print(f"ERROR: Cannot find {cache_file}. Run build_cache.py first!")
