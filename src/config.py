@@ -3,7 +3,7 @@
 DATASET_CONFIG = {
     'global_seed': 50,
     'mode': "opticalPSF_",
-    'total_images': 250,
+    'total_images': 10,
     'exposure_time': 1.0,        # seconds
     'focal_length_mm': 400.0,    
     'roll': 0.0,                 # degrees

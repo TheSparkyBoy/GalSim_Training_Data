@@ -17,13 +17,19 @@ class DatasetOrchestrator:
         self.cfg = config
         self.base_dir = os.path.expanduser('~/GalSim_Training_Data')
         
+        # Calculate FOV
         fov = round(206.264806247096355 * (self.cfg['pixel_size_um'] / self.cfg['focal_length_mm']) * self.cfg['image_size_x'] / 3600.0, 2)
         
-        self.dataset_name = (f"{self.cfg['mode']}gaiadr3_global_seed_{self.cfg['global_seed']}_"
-                             f"fov_{fov}size_x_{self.cfg['image_size_x']}size_y_{self.cfg['image_size_y']}_"
+        # Strip the '.csv' extension from the catalog name for a cleaner folder
+        catalog_name = self.cfg['cache_filename'].replace('.csv', '')
+        
+        # Build the dynamic dataset name
+        self.dataset_name = (f"{self.cfg['mode']}{catalog_name}_global_seed_{self.cfg['global_seed']}_"
+                             f"fov_{fov}_size_x_{self.cfg['image_size_x']}_size_y_{self.cfg['image_size_y']}_"
                              f"pxlsz_{self.cfg['pixel_size_um']}um_{self.cfg['focal_length_mm']}mm_"
                              f"{self.cfg['exposure_time']}s_mag11_roll{self.cfg['roll']}deg_5seconds")
         
+        # --- THIS IS THE MISSING BLOCK ---
         self.dirs = {
             'fits': os.path.join(self.base_dir, 'training_data', self.dataset_name, 'fits'),
             'png':  os.path.join(self.base_dir, 'training_data', self.dataset_name, 'png'),

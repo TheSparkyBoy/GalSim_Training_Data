@@ -13,6 +13,6 @@ if __name__ == '__main__':
     random.seed(DATASET_CONFIG['global_seed'])
     np.random.seed(DATASET_CONFIG['global_seed'])
     
-    # 2. Ignite the pipeline!
+    # 2. Start the pipeline
     manager = DatasetOrchestrator(DATASET_CONFIG)
     manager.execute()
