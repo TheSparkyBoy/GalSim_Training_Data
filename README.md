@@ -8,9 +8,22 @@ Step 1: Create a Dedicated Environment
 It is highly recommended to isolate these packages to prevent dependency conflicts.
 
 Bash
+
+# Install conda for linux x86
+```
+wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash Miniforge3-Linux-x86_64.sh
+```
+
+# Accept Terms of Service
+This step can be skipped if it doesn't go through, otherwise try using AI if the conda environment can't be created successfuly.
+```
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+```
 # Create a new environment named 'galsim_env' running Python 3.10
 ```
-conda create -n galsim_env python=3.10 -y
+conda create -n galsim_env -c conda-forge python=3.10 galsim astropy astroquery pandas matplotlib numpy -y
 ```
 # Activate the environment
 ```
@@ -24,11 +37,11 @@ Bash
 ```
 python src/build_cache_GAIADR3.py
 ```
-
-Bash
+# Running V3 Star Generator
 ```
-conda install -c conda-forge galsim astropy astroquery pandas matplotlib numpy -y
+python run_pipeline.py
 ```
+To change the camera specification or catalog number, open config.py and adjust there. Make sure to save the config.py before running run_pipeline.py again.
 
 Technical Specs of Hardware Simulated:
 Sensor: ZWO ASI585MM Pro - https://www.zwoastro.com/product/asi585mc-mm-pro/

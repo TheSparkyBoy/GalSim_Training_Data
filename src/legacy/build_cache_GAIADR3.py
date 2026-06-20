@@ -71,4 +71,4 @@ def build_local_cache(filename="GAIADR3_master_star_cache.csv", max_magnitude=7.
 
 if __name__ == '__main__':
     # A max_magnitude of 12.0 with a chunk size of 15 degrees is the sweet spot
-    build_local_cache(filename="GAIADR3_master_star_cache_6.csv", max_magnitude=6.0, chunk_size=15)
+    build_local_cache(filename="GAIADR3_master_star_cache_12.csv", max_magnitude=12.0, chunk_size=15)

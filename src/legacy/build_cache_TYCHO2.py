@@ -55,11 +55,15 @@ def build_tycho2_cache(max_magnitude=8.0, chunk_size=30):
         master_df = pd.concat(all_chunks, ignore_index=True)
         
         # --- The TYC to source_id Conversion ---
-        # We mathematically fuse the 3 columns into a single unique integer.
-        # Formula: (TYC1 * 1,000,000) + (TYC2 * 10) + TYC3
+        # 1. The Fused Integer (Great for neural networks)
         master_df['source_id'] = (master_df['TYC1'].astype('int64') * 1000000) + \
                                  (master_df['TYC2'].astype('int64') * 10) + \
                                  master_df['TYC3'].astype('int64')
+                                 
+        # 2. The Official String ID (e.g., "TYC 1234-567-1")
+        master_df['TYC_ID'] = 'TYC ' + master_df['TYC1'].astype(str) + '-' + \
+                                       master_df['TYC2'].astype(str) + '-' + \
+                                       master_df['TYC3'].astype(str)
         
         # Rename columns to match Gaia DR3 format exactly
         master_df = master_df.rename(columns={
@@ -68,12 +72,17 @@ def build_tycho2_cache(max_magnitude=8.0, chunk_size=30):
             'VTmag': 'Gmag'
         })
         
-        # Drop the old TYC columns to keep the CSV clean and small
-        master_df = master_df[['source_id', 'RA_ICRS', 'DE_ICRS', 'Gmag']]
+        # Drop the old separate TYC columns, but KEEP the new string TYC_ID
+        master_df = master_df[['source_id', 'TYC_ID', 'RA_ICRS', 'DE_ICRS', 'Gmag']]
         
         # --- Save to Hard Drive ---
         base_dir = os.path.expanduser('~/GalSim_Training_Data')
-        filepath = os.path.join(base_dir,'master_star_caches', filename)
+        cache_dir = os.path.join(base_dir, 'master_star_caches')
+        
+        # Safety net: Create the folder if it doesn't exist
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        filepath = os.path.join(cache_dir, filename)
         
         master_df.to_csv(filepath, index=False)
         
@@ -86,4 +95,4 @@ def build_tycho2_cache(max_magnitude=8.0, chunk_size=30):
 
 if __name__ == '__main__':
     # Magnitude 12.0 pulls roughly the ~40,000 brightest stars in the sky
-    build_tycho2_cache(max_magnitude=11, chunk_size=30)
+    build_tycho2_cache(max_magnitude=12, chunk_size=30)
