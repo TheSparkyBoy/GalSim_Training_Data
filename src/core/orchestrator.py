@@ -36,8 +36,8 @@ class DatasetOrchestrator:
         anom_status = "mixed_anomalies" if any_anomalies else "perfect_optics"
         
         # Build the dynamic dataset name
-        self.dataset_name = (f"{self.cfg['mode']}{catalog_name}_global_seed_{self.cfg['global_seed']}_"
-                             f"fov_{fov}_size_x_{self.cfg['image_size_x']}_size_y_{self.cfg['image_size_y']}_"
+        self.dataset_name = (f"{self.cfg['mode']}{catalog_name}_seed_{self.cfg['global_seed']}_"
+                             f"fov_{fov}_x_{self.cfg['image_size_x']}_y_{self.cfg['image_size_y']}_"
                              f"pxlsz_{self.cfg['pixel_size_um']}um_{self.cfg['focal_length_mm']}mm_"
                              f"{self.cfg['exposure_time']}s_mag11_roll{self.cfg['roll']}deg_{anom_status}")
         
