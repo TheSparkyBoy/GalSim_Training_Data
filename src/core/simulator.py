@@ -100,7 +100,7 @@ class TelescopeSimulator:
                 self.stars_drawn += 1
 
     def apply_sensor_noise(self):
-        self.image += 50.0 # background level
+        self.image += 500.0 # background level
         rng = galsim.BaseDeviate(int(self.image_id))
         
         self.image.addNoise(galsim.PoissonNoise(rng))
