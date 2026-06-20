@@ -27,7 +27,7 @@ class DatasetOrchestrator:
         self.dataset_name = (f"{self.cfg['mode']}{catalog_name}_global_seed_{self.cfg['global_seed']}_"
                              f"fov_{fov}_size_x_{self.cfg['image_size_x']}_size_y_{self.cfg['image_size_y']}_"
                              f"pxlsz_{self.cfg['pixel_size_um']}um_{self.cfg['focal_length_mm']}mm_"
-                             f"{self.cfg['exposure_time']}s_mag11_roll{self.cfg['roll']}deg_5seconds")
+                             f"{self.cfg['exposure_time']}s_mag11_roll{self.cfg['roll']}deg_{self.cfg['additional comments']}")
         
         # --- THIS IS THE MISSING BLOCK ---
         self.dirs = {
@@ -129,7 +129,9 @@ class DatasetOrchestrator:
                     'focal_length_mm': self.cfg['focal_length_mm'],
                     'exposure_time_s': self.cfg['exposure_time'],
                     'total_stars': result['stars_drawn'],
-                    'median_image_snr': result['median_snr']
+                    'median_image_snr': result['median_snr'],
+                    'bg_mean_e': result['bg_mean_e'],
+                    'bg_std_e': result['bg_std_e'],
                 })
                 
         if manifest_data:

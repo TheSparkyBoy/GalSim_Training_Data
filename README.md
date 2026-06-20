@@ -36,6 +36,11 @@ Bash
 ```
 python src/build_cache_GAIADR3.py
 ```
+# Running V3 Star Generator
+```
+python run_pipeline.py
+```
+To change the camera specification or catalog number, open config.py and adjust there. Make sure to save the config.py before running run_pipeline.py again.
 
 Technical Specs of Hardware Simulated:
 Sensor: ZWO ASI585MM Pro - https://www.zwoastro.com/product/asi585mc-mm-pro/
