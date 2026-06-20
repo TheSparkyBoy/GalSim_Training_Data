@@ -16,6 +16,7 @@ bash Miniforge3-Linux-x86_64.sh
 ```
 
 # Accept Terms of Service
+This step can be skipped if it doesn't go through, otherwise try using AI if the conda environment can't be created successfuly.
 ```
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
