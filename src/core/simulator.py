@@ -38,7 +38,7 @@ class TelescopeSimulator:
         self.anom_mag = self.cfg.get('anom_mag_variation', False)
         self.anom_smear = self.cfg.get('anom_motion_smear', False)
         
-        # --- NEW ANOMALY TRACKING VARIABLES ---
+        # Anomaly tracking variables
         self.stars_dropped = 0
         self.false_stars_injected = 0
         self.smear_applied = 0.0
@@ -92,8 +92,9 @@ class TelescopeSimulator:
         else:
             motion_smear = None
             
-        for _, row in self.cfg['master_table'].iterrows():
-            base_mag = row['Gmag']
+        for row in self.cfg['master_table'].itertuples():
+            # --- FIXED: Pure dot-notation for all catalog attributes! ---
+            base_mag = getattr(row, 'Gmag', np.nan)
             if pd.isna(base_mag): continue
                 
             mag = base_mag + np.random.normal(0, 0.15) if self.anom_mag else base_mag
@@ -101,10 +102,11 @@ class TelescopeSimulator:
             if self.anom_drop:
                 p_detect = 1.0 / (1.0 + np.exp(3.0 * (mag - 10.5)))
                 if random.random() > p_detect:
-                    self.stars_dropped += 1 # TRACK DROPPED STARS
+                    self.stars_dropped += 1 
                     continue 
                 
-            world_pos = galsim.CelestialCoord(row['RA_ICRS'] * galsim.degrees, row['DE_ICRS'] * galsim.degrees)
+            # --- FIXED: Dot-notation for Right Ascension and Declination ---
+            world_pos = galsim.CelestialCoord(row.RA_ICRS * galsim.degrees, row.DE_ICRS * galsim.degrees)
             pixel_pos = self.wcs.toImage(world_pos)
             x, y = pixel_pos.x, pixel_pos.y
             
@@ -139,8 +141,11 @@ class TelescopeSimulator:
                 star = final_profile.withFlux(flux)
                 star.drawImage(image=self.image, center=final_pos, add_to_image=True, method='phot')
                 
+                # --- FIXED: Safely extract raw string ID using dot-notation ---
+                raw_id_str = str(getattr(row, 'source_id', getattr(row, 'star_id', '0'))).split('.')[0]
+                
                 self.temp_star_coords.append({
-                    'id': int(row['source_id']),
+                    'id': raw_id_str,
                     'x': final_pos.x,
                     'y': final_pos.y,
                     'mag': round(mag, 3)
@@ -148,7 +153,7 @@ class TelescopeSimulator:
                 self.stars_drawn += 1
                 
         if self.anom_false:
-            self.false_stars_injected = np.random.poisson(8) # TRACK FALSE STARS
+            self.false_stars_injected = np.random.poisson(8) 
             for _ in range(self.false_stars_injected):
                 fx = random.uniform(0, self.cfg['image_size_x'])
                 fy = random.uniform(0, self.cfg['image_size_y'])
@@ -158,9 +163,8 @@ class TelescopeSimulator:
                 false_psf = galsim.Gaussian(fwhm=1.5).withFlux(fflux)
                 false_psf.drawImage(image=self.image, center=galsim.PositionD(fx, fy), add_to_image=True, method='phot')
                 
-                # Save false stars to a separate temp list
                 self.temp_false_coords.append({
-                    'id': -1, # Flag as non-catalog object
+                    'id': '-1', 
                     'x': fx,
                     'y': fy,
                     'mag': round(fmag, 3)
@@ -211,7 +215,6 @@ class TelescopeSimulator:
         return round(measured_snr, 2)
 
     def extract_final_labels(self):
-        # 1. Process Real Stars
         for star in self.temp_star_coords:
             final_snr = self.measure_snr(star['x'], star['y'])
             if final_snr < 1.0: continue
@@ -220,10 +223,9 @@ class TelescopeSimulator:
             self.label_data.append([
                 star['id'], round(star['x'], 2), round(star['y'], 2), 
                 star['mag'], self.cfg['focal_length_mm'], self.cfg['exposure_time'], 
-                final_snr, 0 # <--- is_artifact = 0 (False)
+                final_snr, 0 
             ])
             
-        # 2. Process False Stars (Artifacts)
         for star in self.temp_false_coords:
             final_snr = self.measure_snr(star['x'], star['y'])
             if final_snr < 1.0: continue
@@ -231,7 +233,7 @@ class TelescopeSimulator:
             self.label_data.append([
                 star['id'], round(star['x'], 2), round(star['y'], 2), 
                 star['mag'], self.cfg['focal_length_mm'], self.cfg['exposure_time'], 
-                final_snr, 1 # <--- is_artifact = 1 (True)
+                final_snr, 1 
             ])
 
     def measure_global_background(self):
@@ -251,7 +253,6 @@ class TelescopeSimulator:
         
         with open(csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            # --- NEW is_artifact HEADER ---
             writer.writerow(['star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time', 'snr', 'is_artifact'])
             writer.writerows(self.label_data)
             
@@ -289,7 +290,6 @@ class TelescopeSimulator:
             'median_snr': median_snr,
             'bg_mean_e': self.bg_stats['mean_e'],
             'bg_std_e': self.bg_stats['std_e'],
-            # --- NEW METRICS FOR THE ORCHESTRATOR ---
             'dropped_stars': self.stars_dropped,
             'false_stars': self.false_stars_injected,
             'smear_px': round(self.smear_applied, 2),
