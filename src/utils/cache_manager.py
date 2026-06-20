@@ -138,7 +138,8 @@ if __name__ == '__main__':
     # e.g., `python utils/cache_manager.py`
     
     manager = CacheManager()
-    
-    # Uncomment the one you want to download:
-    manager.build_gaiadr3_cache(max_magnitude=12.0)
-    # manager.build_tycho2_cache(max_magnitude=12.0)
+    magnitude = 0
+    while magnitude < 13.0:
+        manager.build_gaiadr3_cache(max_magnitude=magnitude)
+        manager.build_tycho2_cache(max_magnitude=magnitude)
+        magnitude += 1.0
