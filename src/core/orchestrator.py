@@ -58,7 +58,8 @@ class DatasetOrchestrator:
         cache_file = os.path.join(self.base_dir, "master_star_caches", self.cfg['cache_filename'])
         if not os.path.exists(cache_file):
             raise FileNotFoundError(f"Cannot find {cache_file}. Run build_cache.py first!")
-        self.master_table = pd.read_csv(cache_file)
+        self.master_table = pd.read_csv(cache_file, dtype={'source_id': str, 'star_id': str})
+        
         print(f"--> Loaded {len(self.master_table)} stars into RAM instantly.\n")
 
     def get_starting_id(self):

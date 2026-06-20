@@ -7,8 +7,6 @@ This project requires a Conda environment (Miniforge/Miniconda) to properly hand
 Step 1: Create a Dedicated Environment
 It is highly recommended to isolate these packages to prevent dependency conflicts.
 
-Bash
-
 # Install conda for linux x86
 ```
 wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
@@ -43,8 +41,26 @@ python run_pipeline.py
 ```
 To change the camera specification or catalog number, open config.py and adjust there. Make sure to save the config.py before running run_pipeline.py again.
 
+# Using the csv_comparer.py
+This is a CSV comparer tool to check if all the stars in a given CSV file exist in a star catalog file.
+Make sure to install PyQt5, this is meant to be run on any machine, however windows is recommended for now.
+```
+pip install PyQt5 pandas
+python catalog_validator_gui.py
+```
+
 Technical Specs of Hardware Simulated:
 Sensor: ZWO ASI585MM Pro - https://www.zwoastro.com/product/asi585mc-mm-pro/
 ![alt text](image-1.png)
 Lens: ZWO FF65 APO - https://www.zwoastro.com/product/zwo-ff65-apo/
 ![alt text](image.png)
+
+# For devs
+Install pyinstaller.
+```
+pip install pyinstaller
+```
+Compile executable by:
+```
+pyinstaller --name "ERAU_Catalog_Validator" --onefile --windowed catalog_validator.py
+```
