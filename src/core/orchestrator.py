@@ -22,14 +22,25 @@ class DatasetOrchestrator:
         
         # Strip the '.csv' extension from the catalog name for a cleaner folder
         catalog_name = self.cfg['cache_filename'].replace('.csv', '')
+
+        # --- UPDATED FOLDER NAMING LOGIC ---
+        # Check if ANY anomalies are currently active in the config
+        any_anomalies = any([
+            self.cfg.get('anom_lens_distortion', False), 
+            self.cfg.get('anom_false_stars', False),
+            self.cfg.get('anom_drop_stars', False), 
+            self.cfg.get('anom_pos_variation', False),
+            self.cfg.get('anom_mag_variation', False), 
+            self.cfg.get('anom_motion_smear', False)
+        ])
+        anom_status = "mixed_anomalies" if any_anomalies else "perfect_optics"
         
         # Build the dynamic dataset name
         self.dataset_name = (f"{self.cfg['mode']}{catalog_name}_global_seed_{self.cfg['global_seed']}_"
                              f"fov_{fov}_size_x_{self.cfg['image_size_x']}_size_y_{self.cfg['image_size_y']}_"
                              f"pxlsz_{self.cfg['pixel_size_um']}um_{self.cfg['focal_length_mm']}mm_"
-                             f"{self.cfg['exposure_time']}s_mag11_roll{self.cfg['roll']}deg_{self.cfg['additional comments']}")
+                             f"{self.cfg['exposure_time']}s_mag11_roll{self.cfg['roll']}deg_{anom_status}")
         
-        # --- THIS IS THE MISSING BLOCK ---
         self.dirs = {
             'fits': os.path.join(self.base_dir, 'training_data', self.dataset_name, 'fits'),
             'png':  os.path.join(self.base_dir, 'training_data', self.dataset_name, 'png'),
@@ -77,9 +88,8 @@ class DatasetOrchestrator:
             (15.00, 60.00), (180.00, 0.0), (45.00, 89.0), (250.00, -60.0)
         ]
 
-        # Ensure we package the config dictionary for each worker
         def create_task(img_id, ra, dec):
-            task = self.cfg.copy() # Base parameters from config
+            task = self.cfg.copy()
             task.update({
                 'image_id': img_id,
                 'ra': ra,
@@ -132,6 +142,19 @@ class DatasetOrchestrator:
                     'median_image_snr': result['median_snr'],
                     'bg_mean_e': result['bg_mean_e'],
                     'bg_std_e': result['bg_std_e'],
+                    # --- QUANTITATIVE METRICS ---
+                    'distorted_stars': result['distorted_stars'],
+                    'dropped_stars': result['dropped_stars'],
+                    'false_stars': result['false_stars'],
+                    'smear_px': result['smear_px'],
+                    
+                    # --- CONFIGURATION TOGGLE STATES ---
+                    'anom_lens_on': self.cfg.get('anom_lens_distortion', False),
+                    'anom_false_on': self.cfg.get('anom_false_stars', False),
+                    'anom_drop_on': self.cfg.get('anom_drop_stars', False),
+                    'anom_pos_on': self.cfg.get('anom_pos_variation', False),
+                    'anom_mag_on': self.cfg.get('anom_mag_variation', False),
+                    'anom_smear_on': self.cfg.get('anom_motion_smear', False)
                 })
                 
         if manifest_data:

@@ -21,23 +21,33 @@ class TelescopeSimulator:
         self.target_ra = self.cfg['ra']
         self.target_dec = self.cfg['dec']
         
-        # Deterministic seeding for this specific worker/image
         self.worker_seed = self.cfg['global_seed'] + int(self.image_id)
         random.seed(self.worker_seed)
         np.random.seed(self.worker_seed)
         
-        # State variables
         self.image = galsim.ImageF(self.cfg['image_size_x'], self.cfg['image_size_y'])
         self.wcs = None
         self.pixel_scale = None
         self.stars_drawn = 0
         
-        # Data storage
-        self.temp_star_coords = [] # Holds coordinates temporarily until noise is applied
+        # --- GRANULAR ANOMALY TOGGLES ---
+        self.anom_lens = self.cfg.get('anom_lens_distortion', False)
+        self.anom_false = self.cfg.get('anom_false_stars', False)
+        self.anom_drop = self.cfg.get('anom_drop_stars', False)
+        self.anom_pos = self.cfg.get('anom_pos_variation', False)
+        self.anom_mag = self.cfg.get('anom_mag_variation', False)
+        self.anom_smear = self.cfg.get('anom_motion_smear', False)
+        
+        # --- NEW ANOMALY TRACKING VARIABLES ---
+        self.stars_dropped = 0
+        self.false_stars_injected = 0
+        self.smear_applied = 0.0
+        self.temp_false_coords = []
+        
+        self.temp_star_coords = [] 
         self.label_data = []
         self.star_snr_list = []
         
-        # Photometry Constants
         self.universal_baseline = 1e6 
         self.aperature_area_cm2 = np.pi * (6.5/2)**2 
         self.quantum_efficiency = 0.91 * 0.9 
@@ -58,23 +68,57 @@ class TelescopeSimulator:
         self.wcs = galsim.TanWCS(affine, world_origin=world_origin, units=galsim.arcsec)
         self.image.wcs = self.wcs
 
+    def _apply_lens_distortion(self, x, y, cx, cy, max_r):
+        dx = x - cx
+        dy = y - cy
+        r_norm = np.sqrt(dx**2 + dy**2) / max_r
+        k1 = 0.08 
+        distortion_factor = 1.0 + (k1 * (r_norm ** 2))
+        return cx + (dx * distortion_factor), cy + (dy * distortion_factor)
+
     def draw_stars(self):
-        """Draws the optical PSFs and saves their coordinates for later measurement."""
         global_defocus = random.uniform(-0.04, 0.04)
         center_x, center_y = self.cfg['image_size_x'] / 2.0, self.cfg['image_size_y'] / 2.0
         max_radius = np.sqrt(center_x**2 + center_y**2) 
         
+        smear_length_pixels = random.uniform(0.0, 2.5) if self.anom_smear else 0.0
+        smear_angle = random.uniform(0, 360) * galsim.degrees
+        self.smear_applied = smear_length_pixels
+        
+        if smear_length_pixels > 0.1:
+            minor_axis = 0.1 
+            q_ratio = minor_axis / smear_length_pixels
+            motion_smear = galsim.Gaussian(sigma=smear_length_pixels/2.0).shear(q=q_ratio, beta=smear_angle)
+        else:
+            motion_smear = None
+            
         for _, row in self.cfg['master_table'].iterrows():
-            mag = row['Gmag']
-            if pd.isna(mag): continue
+            base_mag = row['Gmag']
+            if pd.isna(base_mag): continue
+                
+            mag = base_mag + np.random.normal(0, 0.15) if self.anom_mag else base_mag
+            
+            if self.anom_drop:
+                p_detect = 1.0 / (1.0 + np.exp(3.0 * (mag - 10.5)))
+                if random.random() > p_detect:
+                    self.stars_dropped += 1 # TRACK DROPPED STARS
+                    continue 
                 
             world_pos = galsim.CelestialCoord(row['RA_ICRS'] * galsim.degrees, row['DE_ICRS'] * galsim.degrees)
             pixel_pos = self.wcs.toImage(world_pos)
+            x, y = pixel_pos.x, pixel_pos.y
             
-            if self.image.bounds.includes(pixel_pos):
-                flux = self.F0 * 10 ** ((-mag) / 2.5)
+            if self.anom_lens:
+                x, y = self._apply_lens_distortion(x, y, center_x, center_y, max_radius)
+            if self.anom_pos:
+                x += np.random.normal(0, 0.2)
+                y += np.random.normal(0, 0.2)
                 
-                dx, dy = pixel_pos.x - center_x, pixel_pos.y - center_y
+            final_pos = galsim.PositionD(x, y)
+            
+            if self.image.bounds.includes(final_pos):
+                flux = self.F0 * 10 ** ((-mag) / 2.5)
+                dx, dy = final_pos.x - center_x, final_pos.y - center_y
                 r_norm = np.sqrt(dx**2 + dy**2) / max_radius
                 edge_coma = 0.04 * (r_norm ** 2)
                 edge_astig = 0.03 * (r_norm ** 2)
@@ -87,33 +131,53 @@ class TelescopeSimulator:
                     gsparams=galsim.GSParams(folding_threshold=1e-3, maximum_fft_size=32768)
                 )
                 
-                star = optical_psf.withFlux(flux)
-                star.drawImage(image=self.image, center=pixel_pos, add_to_image=True, method='phot')
+                if self.anom_smear and motion_smear is not None:
+                    final_profile = galsim.Convolve([optical_psf, motion_smear])
+                else:
+                    final_profile = optical_psf
+                    
+                star = final_profile.withFlux(flux)
+                star.drawImage(image=self.image, center=final_pos, add_to_image=True, method='phot')
                 
-                # Save the star data temporarily, DO NOT calculate SNR yet
                 self.temp_star_coords.append({
                     'id': int(row['source_id']),
-                    'x': pixel_pos.x,
-                    'y': pixel_pos.y,
+                    'x': final_pos.x,
+                    'y': final_pos.y,
                     'mag': round(mag, 3)
                 })
                 self.stars_drawn += 1
+                
+        if self.anom_false:
+            self.false_stars_injected = np.random.poisson(8) # TRACK FALSE STARS
+            for _ in range(self.false_stars_injected):
+                fx = random.uniform(0, self.cfg['image_size_x'])
+                fy = random.uniform(0, self.cfg['image_size_y'])
+                fmag = random.uniform(5.0, 11.0)
+                fflux = self.F0 * 10 ** ((-fmag) / 2.5)
+                
+                false_psf = galsim.Gaussian(fwhm=1.5).withFlux(fflux)
+                false_psf.drawImage(image=self.image, center=galsim.PositionD(fx, fy), add_to_image=True, method='phot')
+                
+                # Save false stars to a separate temp list
+                self.temp_false_coords.append({
+                    'id': -1, # Flag as non-catalog object
+                    'x': fx,
+                    'y': fy,
+                    'mag': round(fmag, 3)
+                })
 
     def apply_sensor_noise(self):
-        self.image += 500.0 # background level
+        self.image += 1500.0 
         rng = galsim.BaseDeviate(int(self.image_id))
-        
         self.image.addNoise(galsim.PoissonNoise(rng))
         self.image.addNoise(galsim.GaussianNoise(rng, sigma=0.7))
         self.image.quantize()
         self.image.array[self.image.array > 4095] = 4095
 
     def measure_snr(self, pixel_x, pixel_y):
-        """Performs true aperture photometry on a specific coordinate to measure SNR."""
         r_inner = 2.5  
         r_bg_in = 4.0  
         r_bg_out = 7.0 
-        
         box_size = int(np.ceil(r_bg_out)) + 2
         x_min, x_max = int(pixel_x) - box_size, int(pixel_x) + box_size
         y_min, y_max = int(pixel_y) - box_size, int(pixel_y) + box_size
@@ -122,9 +186,7 @@ class TelescopeSimulator:
             return 0.0 
             
         cutout = self.image.array[y_min:y_max, x_min:x_max]
-        
         y_grid, x_grid = np.ogrid[-box_size:box_size, -box_size:box_size]
-        
         sub_x = pixel_x - int(pixel_x)
         sub_y = pixel_y - int(pixel_y)
         r_grid = np.sqrt((x_grid - sub_x)**2 + (y_grid - sub_y)**2)
@@ -134,71 +196,50 @@ class TelescopeSimulator:
         
         n_px = np.sum(star_mask)
         n_b = np.sum(bg_mask)
-        
-        # 1. Use the GLOBAL median to subtract the sky glow
         N_S_measured = self.bg_stats['mean_adu']
-        
         raw_star_flux = np.sum(cutout[star_mask])
         N_star_measured = raw_star_flux - (N_S_measured * n_px)
         
         if N_star_measured <= 0:
             return 0.0 
             
-        # 2. Use the GLOBAL standard deviation to calculate the variance
-        # We square the standard deviation to get variance
         global_bg_variance = self.bg_stats['std_e'] ** 2
-        
-        # 3. Final SNR Math
         bg_penalty = 1.0 + (n_px / n_b)
         A_term = n_px * bg_penalty * global_bg_variance
         
         measured_snr = N_star_measured / np.sqrt(N_star_measured + A_term)
-        
         return round(measured_snr, 2)
 
     def extract_final_labels(self):
-        """Loops through the saved coordinates and measures SNR on the noisy image."""
+        # 1. Process Real Stars
         for star in self.temp_star_coords:
             final_snr = self.measure_snr(star['x'], star['y'])
+            if final_snr < 1.0: continue
             
             self.star_snr_list.append(final_snr)
             self.label_data.append([
-                star['id'], 
-                round(star['x'], 2), 
-                round(star['y'], 2), 
-                star['mag'], 
-                self.cfg['focal_length_mm'], 
-                self.cfg['exposure_time'], 
-                final_snr
+                star['id'], round(star['x'], 2), round(star['y'], 2), 
+                star['mag'], self.cfg['focal_length_mm'], self.cfg['exposure_time'], 
+                final_snr, 0 # <--- is_artifact = 0 (False)
+            ])
+            
+        # 2. Process False Stars (Artifacts)
+        for star in self.temp_false_coords:
+            final_snr = self.measure_snr(star['x'], star['y'])
+            if final_snr < 1.0: continue
+            
+            self.label_data.append([
+                star['id'], round(star['x'], 2), round(star['y'], 2), 
+                star['mag'], self.cfg['focal_length_mm'], self.cfg['exposure_time'], 
+                final_snr, 1 # <--- is_artifact = 1 (True)
             ])
 
     def measure_global_background(self):
-        """
-        Uses Sigma Clipping to mask out stars and measure the true background 
-        mean and standard deviation in both ADU and Electrons.
-        """
-        # 1. Run the Sigma Clipping algorithm on your image array
-        bg_mean_adu, bg_median_adu, bg_std_adu = sigma_clipped_stats(
-            self.image.array, 
-            sigma=3.0, 
-            maxiters=5
-        )
-        
-        # 2. Convert from ADU to Electrons
+        bg_mean_adu, bg_median_adu, bg_std_adu = sigma_clipped_stats(self.image.array, sigma=3.0, maxiters=5)
         gain_e_per_adu = 1.0 
-        
-        bg_mean_e = bg_mean_adu * gain_e_per_adu
-        bg_std_e = bg_std_adu * gain_e_per_adu
-        
-        # Print or return the results
-        # print(f"Background Mean: {bg_mean_adu:.2f} ADU ({bg_mean_e:.2f} e-)")
-        # print(f"Background StdDev: {bg_std_adu:.2f} ADU ({bg_std_e:.2f} e-)")
-        
         return {
-            'mean_adu': round(bg_mean_adu, 2),
-            'std_adu': round(bg_std_adu, 2),
-            'mean_e': round(bg_mean_e, 2),
-            'std_e': round(bg_std_e, 2)
+            'mean_adu': round(bg_mean_adu, 2), 'std_adu': round(bg_std_adu, 2),
+            'mean_e': round(bg_mean_adu * gain_e_per_adu, 2), 'std_e': round(bg_std_adu * gain_e_per_adu, 2)
         }
 
     def export_files(self):
@@ -210,15 +251,15 @@ class TelescopeSimulator:
         
         with open(csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time', 'snr'])
+            # --- NEW is_artifact HEADER ---
+            writer.writerow(['star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time', 'snr', 'is_artifact'])
             writer.writerows(self.label_data)
             
         fig = plt.figure(dpi=300, figsize=(16, 9), facecolor='black')
         img_array = self.image.array
         vmin = max(1.0, np.percentile(img_array, 1))
         vmax = np.max(img_array)
-        if vmax <= vmin:
-            vmax = vmin + 10.0
+        if vmax <= vmin: vmax = vmin + 10.0
             
         plt.imshow(img_array, cmap='gray', origin='lower', norm=LogNorm(vmin=vmin, vmax=vmax), interpolation='none')
         plt.title(f"Image {self.image_id:07d} (RA:{self.target_ra:.2f}, DEC:{self.target_dec:.2f} | Roll: {self.cfg['roll']:.1f}deg)", color='white')
@@ -228,23 +269,11 @@ class TelescopeSimulator:
 
     def run_pipeline(self):
         start = time.time()
-        
-        # 1. Geometry and math
         self.setup_optics_and_wcs()
-        
-        # 2. Draw perfect stars and save coordinates
         self.draw_stars()
-        
-        # 3. Apply static and background glow
         self.apply_sensor_noise()
-        
-        # 4. Measure the global background statistics
-        self.bg_stats =self.measure_global_background()
-
-        # 5. Measure the SNR using the noisy pixels
+        self.bg_stats = self.measure_global_background()
         self.extract_final_labels()
-        
-        # 6. Save to disk
         self.export_files()
         
         median_snr = round(np.median(self.star_snr_list), 2) if self.star_snr_list else 0.0
@@ -260,5 +289,10 @@ class TelescopeSimulator:
             'median_snr': median_snr,
             'bg_mean_e': self.bg_stats['mean_e'],
             'bg_std_e': self.bg_stats['std_e'],
+            # --- NEW METRICS FOR THE ORCHESTRATOR ---
+            'dropped_stars': self.stars_dropped,
+            'false_stars': self.false_stars_injected,
+            'smear_px': round(self.smear_applied, 2),
+            'distorted_stars': self.stars_drawn if self.anom_lens else 0,
             'time_s': round(time.time() - start, 2)
         }
