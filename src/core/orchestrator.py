@@ -39,7 +39,8 @@ class DatasetOrchestrator:
         self.dataset_name = (f"{self.cfg['mode']}{catalog_name}_seed_{self.cfg['global_seed']}_"
                              f"fov_{fov}_x_{self.cfg['image_size_x']}_y_{self.cfg['image_size_y']}_"
                              f"pxlsz_{self.cfg['pixel_size_um']}um_{self.cfg['focal_length_mm']}mm_"
-                             f"{self.cfg['exposure_time']}s_mag11_roll{self.cfg['roll']}deg_{anom_status}")
+                             f"{self.cfg['exposure_time']}s_mag11_roll{self.cfg['roll']}deg_{anom_status}"
+                             f"{self.cfg['additional comments']}")
         
         self.dirs = {
             'fits': os.path.join(self.base_dir, 'training_data', self.dataset_name, 'fits'),
