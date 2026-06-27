@@ -33,7 +33,7 @@ Run the following command to install the entire pipeline in one go from the cond
 # Building Star Catalog
 Bash
 ```
-python src/build_cache_GAIADR3.py
+ python src/utils/cache_manager.py
 ```
 # Running V3 Star Generator
 ```
