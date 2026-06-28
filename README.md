@@ -64,3 +64,7 @@ Compile executable by:
 ```
 pyinstaller --name "ERAU_Catalog_Validator" --onefile --windowed catalog_validator.py
 ```
+Compile fits extractor:
+```
+pyinstaller --name "ERAU_FITS_Extractor" --onefile --windowed .\fits_extractor_gui.py
+```
