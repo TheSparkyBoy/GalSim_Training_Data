@@ -15,7 +15,7 @@ class FitsTelemetryExtractor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ZWO FITS Hardware Telemetry Extractor")
-        self.setGeometry(150, 150, 1100, 650)
+        self.setGeometry(150, 150, 1200, 650)
         
         self.telemetry_data = []
         self.init_ui()
@@ -58,23 +58,23 @@ class FitsTelemetryExtractor(QMainWindow):
         kpi_layout.addWidget(self.lbl_success)
         kpi_layout.addWidget(self.lbl_failed)
         
-        # 4. Results Ledger Table
+        # 4. Results Ledger Table (Updated Columns to match Manifest)
         self.table = QTableWidget()
-        self.table.setColumnCount(8)
+        self.table.setColumnCount(11)
         self.table.setHorizontalHeaderLabels([
-            "Filename", "Camera Model", "Exposure (s)", 
-            "Temp (°C)", "Gain", "Offset", "Binning", "Date Observed"
+            "Image ID", "RA", "DEC", "Roll (deg)", "Exposure (s)", 
+            "Camera Model", "Temp (°C)", "Gain", "Offset", "Binning", "Date Observed"
         ])
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Stretch)
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents) # Filename needs more space
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents) # Image ID / Filename space
         
         # Master Layout Assembly
         main_layout = QVBoxLayout()
         main_layout.addWidget(file_group)
         main_layout.addWidget(self.run_btn)
         main_layout.addLayout(kpi_layout)
-        main_layout.addWidget(QLabel("<b>Extracted FITS Header Ledger:</b>"))
+        main_layout.addWidget(QLabel("<b>Extracted FITS Header Ledger (Manifest Format):</b>"))
         main_layout.addWidget(self.table)
         
         central_widget = QWidget()
@@ -134,29 +134,43 @@ class FitsTelemetryExtractor(QMainWindow):
                     with fits.open(filepath, mode='readonly') as hdul:
                         header = hdul[0].header
                         
+                        # --- CASCADING FALLBACK SEARCH FOR ASTROMETRY METRICS ---
+                        # Searches standard WCS, NINA, SharpCap, and ZWO capture keys
+                        ra_val = header.get('OBJCTRA', header.get('RA', header.get('CRVAL1', 'N/A')))
+                        dec_val = header.get('OBJCTDEC', header.get('DEC', header.get('CRVAL2', 'N/A')))
+                        roll_val = header.get('ROLL', header.get('ROTANG', header.get('CROTA2', header.get('PA', '0.0'))))
+                        
+                        # Format image_id to match GalSim manifest (strips extension)
+                        img_id = os.path.splitext(filename)[0]
+
                         file_info = {
-                            'filename': filename,
-                            'camera_model': str(header.get('INSTRUME', header.get('CAMERA', 'Unknown'))),
+                            'image_id': img_id,
+                            'ra': str(ra_val),
+                            'dec': str(dec_val),
+                            'camera_roll': str(roll_val),
                             'exposure_time_s': str(header.get('EXPTIME', 'N/A')),
+                            'camera_model': str(header.get('INSTRUME', header.get('CAMERA', 'Unknown'))),
                             'sensor_temp_c': str(header.get('CCD-TEMP', 'N/A')),
                             'gain': str(header.get('GAIN', 'N/A')),
                             'offset': str(header.get('OFFSET', header.get('BLKLEVEL', 'N/A'))),
                             'binning': f"{header.get('XBINNING', 1)}x{header.get('YBINNING', 1)}",
-                            'resolution': f"{header.get('NAXIS1', 'N/A')}x{header.get('NAXIS2', 'N/A')}",
-                            'bit_depth': str(header.get('BITPIX', 'N/A')),
-                            'observation_date': str(header.get('DATE-OBS', 'N/A'))
+                            'observation_date': str(header.get('DATE-OBS', 'N/A')),
+                            'original_filename': filename
                         }
                         
                         self.telemetry_data.append(file_info)
                         
-                        # Add to table
+                        # Populate GUI Table
                         row_idx = self.table.rowCount()
                         self.table.insertRow(row_idx)
                         
                         items = [
-                            QTableWidgetItem(file_info['filename']),
-                            QTableWidgetItem(file_info['camera_model']),
+                            QTableWidgetItem(file_info['image_id']),
+                            QTableWidgetItem(file_info['ra']),
+                            QTableWidgetItem(file_info['dec']),
+                            QTableWidgetItem(file_info['camera_roll']),
                             QTableWidgetItem(file_info['exposure_time_s']),
+                            QTableWidgetItem(file_info['camera_model']),
                             QTableWidgetItem(file_info['sensor_temp_c']),
                             QTableWidgetItem(file_info['gain']),
                             QTableWidgetItem(file_info['offset']),
@@ -187,7 +201,7 @@ class FitsTelemetryExtractor(QMainWindow):
                 df = pd.DataFrame(self.telemetry_data)
                 output_path = os.path.join(target_directory, output_csv_name)
                 df.to_csv(output_path, index=False)
-                QMessageBox.information(self, "Extraction Complete", f"Successfully extracted {success_cnt} FITS headers.\n\nData saved to:\n{output_path}")
+                QMessageBox.information(self, "Extraction Complete", f"Successfully extracted {success_cnt} FITS headers.\n\nManifest saved to:\n{output_path}")
 
         except Exception as e:
             QMessageBox.critical(self, "System Error", f"A fatal error occurred:\n{str(e)}")

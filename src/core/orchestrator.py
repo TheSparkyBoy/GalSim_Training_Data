@@ -23,7 +23,6 @@ class DatasetOrchestrator:
         # Strip the '.csv' extension from the catalog name for a cleaner folder
         catalog_name = self.cfg['cache_filename'].replace('.csv', '')
 
-        # --- UPDATED FOLDER NAMING LOGIC ---
         # Check if ANY anomalies are currently active in the config
         any_anomalies = any([
             self.cfg.get('anom_lens_distortion', False), 
@@ -81,10 +80,9 @@ class DatasetOrchestrator:
         dec = np.degrees(np.arcsin(z))
         return round(ra, 4), round(dec, 4)
 
-    def build_task_list(self, starting_id):
-        tasks = []
+    # --- MEMORY UPGRADE 1: True O(1) Task Generator ---
+    def _task_generator(self, starting_id):
         global_img_id = starting_id
-        
         well_known_targets = [
             (83.82, -5.0), (101.28, -16.7), (201.36, -11.1), (279.23, 38.78),
             (15.00, 60.00), (180.00, 0.0), (45.00, 89.0), (250.00, -60.0)
@@ -101,20 +99,24 @@ class DatasetOrchestrator:
             })
             return task
 
+        count = 0
         for t_ra, t_dec in well_known_targets:
-            if len(tasks) >= self.cfg['total_images']: break
-            tasks.append(create_task(global_img_id, t_ra, t_dec))
+            if count >= self.cfg['total_images']: return
+            yield create_task(global_img_id, t_ra, t_dec)
             global_img_id += 1
+            count += 1
 
-        if len(tasks) < self.cfg['total_images']:
-            num_needed = self.cfg['total_images'] - len(tasks)
-            print(f"Queued 8 well-known targets. Calculating {num_needed} additional random coordinates...")
-            while len(tasks) < self.cfg['total_images']:
-                t_ra, t_dec = self._get_random_sky_coord()
-                tasks.append(create_task(global_img_id, t_ra, t_dec))
-                global_img_id += 1
-                
-        return tasks
+        while count < self.cfg['total_images']:
+            t_ra, t_dec = self._get_random_sky_coord()
+            yield create_task(global_img_id, t_ra, t_dec)
+            global_img_id += 1
+            count += 1
+
+    def _flush_manifest_to_disk(self, buffer_data):
+        if not buffer_data: return
+        df = pd.DataFrame(buffer_data).sort_values(by='image_id')
+        write_header = not os.path.exists(self.manifest_path)
+        df.to_csv(self.manifest_path, mode='a', header=write_header, index=False)
 
     def execute(self):
         self.setup_directories()
