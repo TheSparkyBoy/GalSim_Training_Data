@@ -23,7 +23,8 @@ class DatasetOrchestrator:
         # Strip the '.csv' extension from the catalog name for a cleaner folder
         catalog_name = self.cfg['cache_filename'].replace('.csv', '')
 
-        # --- DYNAMIC FOLDER NAMING LOGIC ---
+        # --- UPDATED FOLDER NAMING LOGIC ---
+        # Check if ANY anomalies are currently active in the config
         any_anomalies = any([
             self.cfg.get('anom_lens_distortion', False), 
             self.cfg.get('anom_false_stars', False),
@@ -39,7 +40,7 @@ class DatasetOrchestrator:
                              f"fov_{fov}_x_{self.cfg['image_size_x']}_y_{self.cfg['image_size_y']}_"
                              f"pxlsz_{self.cfg['pixel_size_um']}um_{self.cfg['focal_length_mm']}mm_"
                              f"{self.cfg['exposure_time']}s_mag11_roll{self.cfg['roll']}deg_{anom_status}"
-                             f"{self.cfg.get('additional comments', '')}")
+                             f"{self.cfg['additional comments']}")
         
         self.dirs = {
             'fits': os.path.join(self.base_dir, 'training_data', self.dataset_name, 'fits'),
@@ -80,9 +81,10 @@ class DatasetOrchestrator:
         dec = np.degrees(np.arcsin(z))
         return round(ra, 4), round(dec, 4)
 
-    # --- O(1) CONSTANT-MEMORY STREAMING GENERATOR ---
-    def _task_generator(self, starting_id):
+    def build_task_list(self, starting_id):
+        tasks = []
         global_img_id = starting_id
+        
         well_known_targets = [
             (83.82, -5.0), (101.28, -16.7), (201.36, -11.1), (279.23, 38.78),
             (15.00, 60.00), (180.00, 0.0), (45.00, 89.0), (250.00, -60.0)
@@ -99,46 +101,38 @@ class DatasetOrchestrator:
             })
             return task
 
-        count = 0
         for t_ra, t_dec in well_known_targets:
-            if count >= self.cfg['total_images']: return
-            yield create_task(global_img_id, t_ra, t_dec)
+            if len(tasks) >= self.cfg['total_images']: break
+            tasks.append(create_task(global_img_id, t_ra, t_dec))
             global_img_id += 1
-            count += 1
 
-        while count < self.cfg['total_images']:
-            t_ra, t_dec = self._get_random_sky_coord()
-            yield create_task(global_img_id, t_ra, t_dec)
-            global_img_id += 1
-            count += 1
-
-    def _flush_manifest_to_disk(self, buffer_data):
-        if not buffer_data: return
-        df = pd.DataFrame(buffer_data).sort_values(by='image_id')
-        write_header = not os.path.exists(self.manifest_path)
-        df.to_csv(self.manifest_path, mode='a', header=write_header, index=False)
+        if len(tasks) < self.cfg['total_images']:
+            num_needed = self.cfg['total_images'] - len(tasks)
+            print(f"Queued 8 well-known targets. Calculating {num_needed} additional random coordinates...")
+            while len(tasks) < self.cfg['total_images']:
+                t_ra, t_dec = self._get_random_sky_coord()
+                tasks.append(create_task(global_img_id, t_ra, t_dec))
+                global_img_id += 1
+                
+        return tasks
 
     def execute(self):
         self.setup_directories()
         self.load_cache()
         starting_id = self.get_starting_id()
+        tasks = self.build_task_list(starting_id)
         
         num_cores = mp.cpu_count()
-        print("--> RAM Optimization Active: Memory capped via stream-chunking and worker-cycling.")
         print(f"\nFiring up {num_cores} autonomous cores for dataset: '{self.dataset_name}'...")
         
         generation_start = time.time()
-        manifest_buffer = []
-        total_processed = 0
+        manifest_data = []
         
-        with mp.Pool(processes=num_cores, maxtasksperchild=50) as pool:
-            task_stream = self._task_generator(starting_id)
-            
-            for result in pool.imap_unordered(worker_bridge, task_stream, chunksize=1):
-                total_processed += 1
+        with mp.Pool(processes=num_cores) as pool:
+            for result in pool.imap_unordered(worker_bridge, tasks):
                 print(f"Image {result['image_id']} | Roll: {result['roll']:6.2f} | Stars: {result['stars_drawn']:4d} | Med. SNR: {result['median_snr']} | Time: {result['time_s']}s")
                 
-                manifest_buffer.append({
+                manifest_data.append({
                     'image_id': result['image_id'],
                     'dataset_group': self.dataset_name,
                     'ra': result['ra'],
@@ -150,10 +144,13 @@ class DatasetOrchestrator:
                     'median_image_snr': result['median_snr'],
                     'bg_mean_e': result['bg_mean_e'],
                     'bg_std_e': result['bg_std_e'],
+                    # --- QUANTITATIVE METRICS ---
                     'distorted_stars': result['distorted_stars'],
                     'dropped_stars': result['dropped_stars'],
                     'false_stars': result['false_stars'],
                     'smear_px': result['smear_px'],
+                    
+                    # --- CONFIGURATION TOGGLE STATES ---
                     'anom_lens_on': self.cfg.get('anom_lens_distortion', False),
                     'anom_false_on': self.cfg.get('anom_false_stars', False),
                     'anom_drop_on': self.cfg.get('anom_drop_stars', False),
@@ -162,16 +159,14 @@ class DatasetOrchestrator:
                     'anom_smear_on': self.cfg.get('anom_motion_smear', False)
                 })
                 
-                if len(manifest_buffer) >= 25:
-                    self._flush_manifest_to_disk(manifest_buffer)
-                    manifest_buffer.clear()
-                    
-        if manifest_buffer:
-            self._flush_manifest_to_disk(manifest_buffer)
-            manifest_buffer.clear()
-            
-        if total_processed > 0:
-            print(f"\nUniversal Dataset complete! Processed {total_processed} images in {time.time() - generation_start:.2f} seconds.")
-            print(f"Global metadata safely synced to: {self.manifest_path}")
+        if manifest_data:
+            df = pd.DataFrame(manifest_data).sort_values(by='image_id')
+            if os.path.exists(self.manifest_path):
+                df.to_csv(self.manifest_path, mode='a', header=False, index=False)
+            else:
+                df.to_csv(self.manifest_path, index=False)
+                
+            print(f"\nUniversal Dataset complete! Total Time: {time.time() - generation_start:.2f} seconds.")
+            print(f"Global metadata appended to: {self.manifest_path}")
         else:
             print("\nZero tasks were queued!")

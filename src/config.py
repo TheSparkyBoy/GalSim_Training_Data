@@ -3,13 +3,13 @@
 DATASET_CONFIG = {
     'global_seed': 53,           # Global random seed for reproducibility
     'mode': "opticalPSF_",
-    'total_images': 1000,          
-    'exposure_time': 5.0,        # seconds
-    'focal_length_mm': 416,      # millimeters
+    'total_images': 64,          
+    'exposure_time': 1.0,        # seconds
+    'focal_length_mm': 150,      # millimeters
     'roll': 0.0,                 # degrees
     'pixel_size_um': 2.9,        # physical size of a pixel in micrometers
-    'image_size_x': 3840,        # horizontal pixels
-    'image_size_y': 2160,        # vertical pixels
+    'image_size_x': 1024,        # horizontal pixels
+    'image_size_y': 1024,        # vertical pixels
     'anom_lens_distortion': False,
     'anom_false_stars': False,
     'anom_drop_stars': False,
