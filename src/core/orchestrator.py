@@ -6,11 +6,37 @@ import pandas as pd
 import numpy as np
 import multiprocessing as mp
 from core.simulator import TelescopeSimulator
+import gc
 
-# Global bridge function required for mp.Pool
+global_master_table = None
+def init_worker(cache_file_path):
+    """
+    Runs exactly once per CPU core when the pool starts.
+    Loads the 1.5GB table directly into the core's local memory.
+    """
+    global global_master_table
+    global_master_table = pd.read_csv(cache_file_path, dtype={'source_id': str, 'star_id': str})
+
 def worker_bridge(task_config):
+    """
+    The main execution function for each image.
+    """
+    # 1. Grab the table from the core's local memory instead of the IPC pipe
+    task_config['master_table'] = global_master_table
+    
+    # 2. Run the heavy C++ GalSim simulation
     simulator = TelescopeSimulator(task_config)
-    return simulator.run_pipeline()
+    result = simulator.run_pipeline()
+    
+    # 3. EXPLICIT RAM CLEARING COMMANDS
+    # Destroy the simulator object and the config reference
+    del simulator
+    del task_config
+    
+    # Force Python to immediately sweep the RAM and return it to the OS
+    gc.collect()
+    
+    return result
 
 class DatasetOrchestrator:
     def __init__(self, config):
@@ -95,7 +121,6 @@ class DatasetOrchestrator:
                 'ra': ra,
                 'dec': dec,
                 'dirs': self.dirs,
-                'master_table': self.master_table
             })
             return task
 
@@ -124,8 +149,14 @@ class DatasetOrchestrator:
         manifest_data = []  # Restored to hold all data in RAM until the very end
         total_processed = 0
         
-        # --- MAXTASKSPERCHILD RETAINED FOR GALSIM C++ LEAKS ---
-        with mp.Pool(processes=num_cores, maxtasksperchild=50) as pool:
+        # Determine the exact path to the CSV file
+        cache_file_path = os.path.join(self.base_dir, "master_star_caches", self.cfg['cache_filename'])
+
+        # Pass the initializer and the file path to the Pool
+        with mp.Pool(processes=num_cores, 
+                     maxtasksperchild=50, 
+                     initializer=init_worker, 
+                     initargs=(cache_file_path,)) as pool:
             task_stream = self._task_generator(starting_id)
             
             for result in pool.imap_unordered(worker_bridge, task_stream, chunksize=1):
