@@ -58,8 +58,9 @@ class TelescopeSimulator:
         self.pixel_scale = 206.264806247096355 * (self.cfg['pixel_size_um'] / self.cfg['focal_length_mm'])
         
         theta = np.radians(self.cfg['roll'])
-        dudx = self.pixel_scale * np.cos(theta)
-        dudy = -self.pixel_scale * np.sin(theta)
+        # --- FIXED: Enforce negative determinant for standard astronomical sky parity ---
+        dudx = -self.pixel_scale * np.cos(theta)
+        dudy = self.pixel_scale * np.sin(theta)
         dvdx = self.pixel_scale * np.sin(theta)
         dvdy = self.pixel_scale * np.cos(theta)
         
@@ -82,6 +83,9 @@ class TelescopeSimulator:
         center_x, center_y = self.cfg['image_size_x'] / 2.0, self.cfg['image_size_y'] / 2.0
         max_radius = np.sqrt(center_x**2 + center_y**2) 
         
+        # Define the telescope boresight on the celestial sphere
+        boresight = galsim.CelestialCoord(self.target_ra * galsim.degrees, self.target_dec * galsim.degrees)
+        
         smear_length_pixels = random.uniform(0.0, 2.5) if self.anom_smear else 0.0
         smear_angle = random.uniform(0, 360) * galsim.degrees
         self.smear_applied = smear_length_pixels
@@ -94,7 +98,6 @@ class TelescopeSimulator:
             motion_smear = None
             
         for row in self.cfg['master_table'].itertuples():
-            # --- FIXED: Pure dot-notation for all catalog attributes! ---
             base_mag = getattr(row, 'Gmag', np.nan)
             if pd.isna(base_mag): continue
                 
@@ -106,8 +109,13 @@ class TelescopeSimulator:
                     self.stars_dropped += 1 
                     continue 
                 
-            # --- FIXED: Dot-notation for Right Ascension and Declination ---
             world_pos = galsim.CelestialCoord(row.RA_ICRS * galsim.degrees, row.DE_ICRS * galsim.degrees)
+            
+            # --- FIXED: ANTIPODE TRAP PREVENTION ---
+            # Ignore stars more than 5 degrees away from the boresight (behind telescope or far outside FOV)
+            if boresight.distanceTo(world_pos) > 5.0 * galsim.degrees:
+                continue
+                
             pixel_pos = self.wcs.toImage(world_pos)
             x, y = pixel_pos.x, pixel_pos.y
             
@@ -142,7 +150,6 @@ class TelescopeSimulator:
                 star = final_profile.withFlux(flux)
                 star.drawImage(image=self.image, center=final_pos, add_to_image=True, method='phot')
                 
-                # --- FIXED: Safely extract raw string ID using dot-notation ---
                 raw_id_str = str(getattr(row, 'source_id', getattr(row, 'star_id', '0'))).split('.')[0]
                 
                 self.temp_star_coords.append({
@@ -152,24 +159,6 @@ class TelescopeSimulator:
                     'mag': round(mag, 3)
                 })
                 self.stars_drawn += 1
-                
-        if self.anom_false:
-            self.false_stars_injected = np.random.poisson(8) 
-            for _ in range(self.false_stars_injected):
-                fx = random.uniform(0, self.cfg['image_size_x'])
-                fy = random.uniform(0, self.cfg['image_size_y'])
-                fmag = random.uniform(5.0, 11.0)
-                fflux = self.F0 * 10 ** ((-fmag) / 2.5)
-                
-                false_psf = galsim.Gaussian(fwhm=1.5).withFlux(fflux)
-                false_psf.drawImage(image=self.image, center=galsim.PositionD(fx, fy), add_to_image=True, method='phot')
-                
-                self.temp_false_coords.append({
-                    'id': '-1', 
-                    'x': fx,
-                    'y': fy,
-                    'mag': round(fmag, 3)
-                })
 
     def apply_sensor_noise(self):
         self.image += 1500.0 
@@ -178,6 +167,41 @@ class TelescopeSimulator:
         self.image.addNoise(galsim.GaussianNoise(rng, sigma=0.7))
         self.image.quantize()
         self.image.array[self.image.array > 4095] = 4095
+
+    def measure_snr(self, x, y):
+        """
+        Calculates the Signal-to-Noise Ratio (SNR) of a star at pixel (x, y)
+        using a 3x3 photometric aperture and global background statistics.
+        """
+        ix, iy = int(round(x)), int(round(y))
+        
+        # Check if the coordinate is within valid image bounds
+        if not (0 <= ix < self.cfg['image_size_x'] and 0 <= iy < self.cfg['image_size_y']):
+            return 0.0
+            
+        # Define a 3x3 pixel bounding box around the centroid
+        x_min = max(0, ix - 1)
+        x_max = min(self.cfg['image_size_x'], ix + 2)
+        y_min = max(0, iy - 1)
+        y_max = min(self.cfg['image_size_y'], iy + 2)
+        
+        # Extract the local pixel cluster from the rendered GalSim image
+        cutout = self.image.array[y_min:y_max, x_min:x_max]
+        n_pix = cutout.size
+        
+        # Retrieve background metrics from sigma_clipped_stats
+        bg_mean = self.bg_stats['mean_adu']
+        bg_std = max(1e-5, self.bg_stats['std_adu'])
+        
+        # Calculate net stellar flux above the background
+        net_signal = float(np.sum(cutout - bg_mean))
+        if net_signal <= 0:
+            return 0.0
+            
+        # Standard CCD photometric SNR equation
+        noise = float(np.sqrt(net_signal + (n_pix * (bg_std ** 2))))
+        
+        return float(round(net_signal / noise, 2))
 
     def _evaluate_merline_howell_telemetry(self, img_array):
         """
@@ -282,7 +306,7 @@ class TelescopeSimulator:
         plt.close(fig)
 
     def run_pipeline(self):
-        start = time.time()
+        start_time = time.time()
         self.setup_optics_and_wcs()
         self.draw_stars()
         self.apply_sensor_noise()

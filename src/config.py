@@ -43,6 +43,6 @@ DATASET_CONFIG = {
     'anom_defocus': True,
     
     # Specific catalog to pull from your cache directory
-    'cache_filename': "GAIADR3_master_star_cache_12.csv",
+    'cache_filename': "GAIADR3_master_star_cache_10.csv",
     'additional comments': ""
 }

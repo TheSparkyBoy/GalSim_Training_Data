@@ -5,23 +5,44 @@ import pandas as pd
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QLabel, QLineEdit, QFileDialog, QTableWidget, 
-    QTableWidgetItem, QHeaderView, QMessageBox, QGroupBox, QGridLayout, QStyleFactory
+    QTableWidgetItem, QHeaderView, QMessageBox, QGroupBox, QGridLayout, 
+    QStyleFactory, QCheckBox, QAction
 )
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtGui import QColor, QFont, QKeySequence
 from PyQt5.QtCore import Qt
 
 class StarCatalogValidator(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Aerospace Star Catalog Cross-Validator")
-        self.setGeometry(100, 100, 1200, 650) # Widened to 1200 to accommodate new columns
+        self.setGeometry(100, 100, 1200, 680)
         
         # Internal Data Storage
         self.output_df = None
         self.catalog_df = None
         self.audit_report_data = []
         
+        self.init_menu()
         self.init_ui()
+
+    def init_menu(self):
+        # --- Native Windows Menu Bar with Ctrl+S Support ---
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu('&File')
+        
+        self.export_action = QAction('&Save Enriched CSV As...', self)
+        self.export_action.setShortcut(QKeySequence.Save) # Binds Ctrl+S
+        self.export_action.setStatusTip('Prompt to save the full enriched cross-check results to a CSV file')
+        self.export_action.triggered.connect(self.export_audit)
+        self.export_action.setEnabled(False)
+        
+        exit_action = QAction('&Exit', self)
+        exit_action.setShortcut('Ctrl+Q')
+        exit_action.triggered.connect(self.close)
+        
+        file_menu.addAction(self.export_action)
+        file_menu.addSeparator()
+        file_menu.addAction(exit_action)
 
     def init_ui(self):
         # 1. File Selection Header Group
@@ -47,12 +68,28 @@ class StarCatalogValidator(QMainWindow):
         file_layout.addWidget(cat_btn, 1, 2)
         file_group.setLayout(file_layout)
         
-        # 2. Execution Trigger
+        # 2. Execution & Interactive Save Prompt Controls
+        exec_layout = QHBoxLayout()
         self.run_btn = QPushButton("Execute Catalog Cross-Check")
         self.run_btn.setFixedHeight(38)
         self.run_btn.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold; font-size: 14px;")
         self.run_btn.clicked.connect(self.run_validation)
-        self.run_btn.setEnabled(False) 
+        self.run_btn.setEnabled(False)
+        
+        # New: Top-level Save As button for immediate access
+        self.top_save_btn = QPushButton("Save Enriched CSV As...")
+        self.top_save_btn.setFixedHeight(38)
+        self.top_save_btn.setStyleSheet("background-color: #1565C0; color: white; font-weight: bold; font-size: 14px;")
+        self.top_save_btn.clicked.connect(self.export_audit)
+        self.top_save_btn.setEnabled(False)
+        
+        self.prompt_save_chk = QCheckBox("Prompt for CSV save location after check completes")
+        self.prompt_save_chk.setChecked(True) # Checked by default so it prompts you immediately!
+        self.prompt_save_chk.setStyleSheet("font-weight: bold; color: #333333; padding-left: 10px;")
+        
+        exec_layout.addWidget(self.run_btn, stretch=2)
+        exec_layout.addWidget(self.top_save_btn, stretch=1)
+        exec_layout.addWidget(self.prompt_save_chk, stretch=1)
         
         # 3. KPI Summary Banner
         kpi_layout = QHBoxLayout()
@@ -66,7 +103,7 @@ class StarCatalogValidator(QMainWindow):
         kpi_layout.addWidget(self.lbl_artifacts)
         kpi_layout.addWidget(self.lbl_orphans)
         
-        # 4. Results Ledger Table (Expanded to 8 columns for RA/DEC)
+        # 4. Results Ledger Table
         self.table = QTableWidget()
         self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
@@ -77,15 +114,16 @@ class StarCatalogValidator(QMainWindow):
         header.setSectionResizeMode(QHeaderView.Stretch)
         
         # 5. Export Footer Button
-        self.export_btn = QPushButton("Export Cross-Check Audit Ledger (CSV)")
-        self.export_btn.setFixedHeight(32)
+        self.export_btn = QPushButton("Save Enriched Cross-Check Results As... (CSV) | Shortcut: Ctrl+S")
+        self.export_btn.setFixedHeight(34)
+        self.export_btn.setStyleSheet("font-weight: bold; font-size: 13px;")
         self.export_btn.clicked.connect(self.export_audit)
         self.export_btn.setEnabled(False)
         
         # Master Layout Assembly
         main_layout = QVBoxLayout()
         main_layout.addWidget(file_group)
-        main_layout.addWidget(self.run_btn)
+        main_layout.addLayout(exec_layout)
         main_layout.addLayout(kpi_layout)
         main_layout.addWidget(QLabel("<b>Itemized Output Star Cross-Check Ledger:</b>"))
         main_layout.addWidget(self.table)
@@ -120,7 +158,7 @@ class StarCatalogValidator(QMainWindow):
     def run_validation(self):
         self.run_btn.setText("Analyzing Datasets... Please Wait")
         self.run_btn.setEnabled(False)
-        QApplication.processEvents() # Keep GUI alive during heavy read
+        QApplication.processEvents()
         
         try:
             # 1. Peek at headers to dynamically identify exact primary key columns
@@ -181,7 +219,7 @@ class StarCatalogValidator(QMainWindow):
                     status = "Artifact (-1)"
                     cat_mag, cat_ra, cat_dec, delta_mag = "N/A", "N/A", "N/A", "N/A"
                     artifact_count += 1
-                    row_color = QColor(255, 243, 224) # Soft Orange
+                    row_color = QColor(255, 243, 224)
                 elif star_id_str in catalog_id_set:
                     status = "Verified in Catalog"
                     cat_mag = mag_lookup.get(star_id_str, "Unknown")
@@ -189,12 +227,12 @@ class StarCatalogValidator(QMainWindow):
                     cat_dec = dec_lookup.get(star_id_str, "Unknown")
                     delta_mag = f"{meas_mag - cat_mag:+.2f}" if isinstance(cat_mag, (int, float)) and not pd.isna(cat_mag) else "N/A"
                     verified_cnt += 1
-                    row_color = QColor(232, 245, 233) # Soft Green
+                    row_color = QColor(232, 245, 233)
                 else:
                     status = "Orphan ID (Missing)"
                     cat_mag, cat_ra, cat_dec, delta_mag = "Missing", "N/A", "N/A", "N/A"
                     orphan_count += 1
-                    row_color = QColor(255, 235, 238) # Soft Red
+                    row_color = QColor(255, 235, 238)
                     
                 # Format text values for table display
                 cat_mag_str = f"{cat_mag:.2f}" if isinstance(cat_mag, (int, float)) and not pd.isna(cat_mag) else str(cat_mag)
@@ -216,13 +254,17 @@ class StarCatalogValidator(QMainWindow):
                     item.setTextAlignment(Qt.AlignCenter)
                     self.table.setItem(idx, col_idx, item)
                     
-                # Save raw row for CSV exporter
-                self.audit_report_data.append({
-                    'output_star_id': star_id_str, 'measured_magnitude': meas_mag,
-                    'measured_snr': meas_snr, 'catalog_validation_status': status,
-                    'reference_catalog_mag': cat_mag, 'reference_catalog_ra': cat_ra,
-                    'reference_catalog_dec': cat_dec, 'magnitude_discrepancy': delta_mag
+                # --- FULL TELEMETRY ENRICHMENT ---
+                enriched_row = row.to_dict()
+                enriched_row.pop('__clean_id', None)
+                enriched_row.update({
+                    'catalog_validation_status': status,
+                    'reference_catalog_mag': cat_mag,
+                    'reference_catalog_ra': cat_ra,
+                    'reference_catalog_dec': cat_dec,
+                    'magnitude_discrepancy': delta_mag
                 })
+                self.audit_report_data.append(enriched_row)
 
             # Update KPI Dashboards
             self.lbl_total.setText(self._create_kpi_card("Total Output Stars", str(len(out_df)), "#1565C0").text())
@@ -230,9 +272,17 @@ class StarCatalogValidator(QMainWindow):
             self.lbl_artifacts.setText(self._create_kpi_card("Injected Artifacts (-1)", str(artifact_count), "#E65100").text())
             self.lbl_orphans.setText(self._create_kpi_card("Orphan IDs (Missing)", str(orphan_count), "#C62828").text())
             
+            # Enable all save/export buttons
             self.export_btn.setEnabled(True)
+            self.top_save_btn.setEnabled(True)
+            self.export_action.setEnabled(True)
             self.run_btn.setText("Execute Catalog Cross-Check")
             self.run_btn.setEnabled(True)
+            
+            # --- INTERACTIVE SAVE PROMPT TRIGGER ---
+            # If checked, automatically pop up the save dialog as soon as analysis completes!
+            if self.prompt_save_chk.isChecked():
+                self.export_audit()
             
         except Exception as e:
             QMessageBox.critical(self, "Auditing Error", f"Failed to parse datasets:\n{str(e)}")
@@ -240,19 +290,27 @@ class StarCatalogValidator(QMainWindow):
             self.run_btn.setEnabled(True)
 
     def export_audit(self):
-        if not self.audit_report_data: return
+        if not self.audit_report_data: 
+            return
         
-        path, _ = QFileDialog.getSaveFileName(self, "Save Verification Ledger", os.path.expanduser("~"), "CSV Files (*.csv)")
+        # Default starting location sets to the directory of the analyzed CSV
+        start_dir = os.path.dirname(self.out_path_input.text()) if self.out_path_input.text() else os.path.expanduser("~")
+        default_name = os.path.join(start_dir, "enriched_crosscheck_results.csv")
+        
+        # Opens the standard Windows Save As dialog prompt
+        path, _ = QFileDialog.getSaveFileName(self, "Save Enriched Verification Results As...", default_name, "CSV Files (*.csv)")
+        
         if path:
             try:
                 pd.DataFrame(self.audit_report_data).to_csv(path, index=False)
-                QMessageBox.information(self, "Export Complete", f"Audit report successfully saved to:\n{path}")
+                self.statusBar().showMessage(f"Successfully saved to: {path}", 8000)
+                QMessageBox.information(self, "Export Complete", f"Enriched results successfully saved to:\n{path}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Failed", f"Could not write CSV:\n{str(e)}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setStyle(QStyleFactory.create("Fusion")) # Clean cross-platform aesthetic
+    app.setStyle(QStyleFactory.create("Fusion"))
     window = StarCatalogValidator()
     window.show()
     sys.exit(app.exec_())
