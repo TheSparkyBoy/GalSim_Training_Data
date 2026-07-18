@@ -14,7 +14,7 @@ class StarCatalogValidator(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Aerospace Star Catalog Cross-Validator")
-        self.setGeometry(100, 100, 1050, 650)
+        self.setGeometry(100, 100, 1200, 650) # Widened to 1200 to accommodate new columns
         
         # Internal Data Storage
         self.output_df = None
@@ -66,12 +66,12 @@ class StarCatalogValidator(QMainWindow):
         kpi_layout.addWidget(self.lbl_artifacts)
         kpi_layout.addWidget(self.lbl_orphans)
         
-        # 4. Results Ledger Table
+        # 4. Results Ledger Table (Expanded to 8 columns for RA/DEC)
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
             "Output Star ID", "Measured Mag", "Measured SNR", 
-            "Catalog Status", "Reference Mag", "Mag Discrepancy (Δ)"
+            "Catalog Status", "Reference Mag", "Catalog RA", "Catalog DEC", "Mag Discrepancy (Δ)"
         ])
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Stretch)
@@ -148,6 +148,22 @@ class StarCatalogValidator(QMainWindow):
                 mag_lookup = cat_df.set_index('__clean_id')['__clean_mag'].to_dict()
             else:
                 mag_lookup = {}
+
+            # 6. Build safe RA/DEC lookup tables dynamically
+            cat_ra_col = next((c for c in cat_df.columns if 'ra' in c.lower()), None)
+            cat_dec_col = next((c for c in cat_df.columns if 'de' in c.lower() or 'dec' in c.lower()), None)
+
+            if cat_ra_col:
+                cat_df['__clean_ra'] = pd.to_numeric(cat_df[cat_ra_col], errors='coerce')
+                ra_lookup = cat_df.set_index('__clean_id')['__clean_ra'].to_dict()
+            else:
+                ra_lookup = {}
+
+            if cat_dec_col:
+                cat_df['__clean_dec'] = pd.to_numeric(cat_df[cat_dec_col], errors='coerce')
+                dec_lookup = cat_df.set_index('__clean_id')['__clean_dec'].to_dict()
+            else:
+                dec_lookup = {}
                 
             # Reset Auditing Storage
             self.audit_report_data = []
@@ -162,22 +178,28 @@ class StarCatalogValidator(QMainWindow):
                 meas_snr = pd.to_numeric(row.get('snr', 0.0), errors='coerce')
                 
                 if star_id_str == '-1':
-                    status, cat_mag, delta_mag = "Artifact (-1)", "N/A", "N/A"
+                    status = "Artifact (-1)"
+                    cat_mag, cat_ra, cat_dec, delta_mag = "N/A", "N/A", "N/A", "N/A"
                     artifact_count += 1
                     row_color = QColor(255, 243, 224) # Soft Orange
                 elif star_id_str in catalog_id_set:
                     status = "Verified in Catalog"
                     cat_mag = mag_lookup.get(star_id_str, "Unknown")
-                    delta_mag = f"{meas_mag - cat_mag:+.2f}" if isinstance(cat_mag, (int, float)) else "N/A"
+                    cat_ra = ra_lookup.get(star_id_str, "Unknown")
+                    cat_dec = dec_lookup.get(star_id_str, "Unknown")
+                    delta_mag = f"{meas_mag - cat_mag:+.2f}" if isinstance(cat_mag, (int, float)) and not pd.isna(cat_mag) else "N/A"
                     verified_cnt += 1
                     row_color = QColor(232, 245, 233) # Soft Green
                 else:
-                    status, cat_mag, delta_mag = "Orphan ID (Missing)", "Missing", "N/A"
+                    status = "Orphan ID (Missing)"
+                    cat_mag, cat_ra, cat_dec, delta_mag = "Missing", "N/A", "N/A", "N/A"
                     orphan_count += 1
                     row_color = QColor(255, 235, 238) # Soft Red
                     
                 # Format text values for table display
-                cat_mag_str = f"{cat_mag:.2f}" if isinstance(cat_mag, (int, float)) else str(cat_mag)
+                cat_mag_str = f"{cat_mag:.2f}" if isinstance(cat_mag, (int, float)) and not pd.isna(cat_mag) else str(cat_mag)
+                cat_ra_str = f"{cat_ra:.5f}" if isinstance(cat_ra, (int, float)) and not pd.isna(cat_ra) else str(cat_ra)
+                cat_dec_str = f"{cat_dec:.5f}" if isinstance(cat_dec, (int, float)) and not pd.isna(cat_dec) else str(cat_dec)
                 meas_mag_str = f"{meas_mag:.2f}" if not pd.isna(meas_mag) else "0.00"
                 meas_snr_str = f"{meas_snr:.2f}" if not pd.isna(meas_snr) else "0.00"
                 
@@ -185,7 +207,8 @@ class StarCatalogValidator(QMainWindow):
                 items = [
                     QTableWidgetItem(star_id_str), QTableWidgetItem(meas_mag_str),
                     QTableWidgetItem(meas_snr_str), QTableWidgetItem(status),
-                    QTableWidgetItem(cat_mag_str), QTableWidgetItem(delta_mag)
+                    QTableWidgetItem(cat_mag_str), QTableWidgetItem(cat_ra_str),
+                    QTableWidgetItem(cat_dec_str), QTableWidgetItem(delta_mag)
                 ]
                 
                 for col_idx, item in enumerate(items):
@@ -197,7 +220,8 @@ class StarCatalogValidator(QMainWindow):
                 self.audit_report_data.append({
                     'output_star_id': star_id_str, 'measured_magnitude': meas_mag,
                     'measured_snr': meas_snr, 'catalog_validation_status': status,
-                    'reference_catalog_mag': cat_mag, 'magnitude_discrepancy': delta_mag
+                    'reference_catalog_mag': cat_mag, 'reference_catalog_ra': cat_ra,
+                    'reference_catalog_dec': cat_dec, 'magnitude_discrepancy': delta_mag
                 })
 
             # Update KPI Dashboards
