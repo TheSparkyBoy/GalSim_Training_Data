@@ -112,8 +112,8 @@ class TelescopeSimulator:
             world_pos = galsim.CelestialCoord(row.RA_ICRS * galsim.degrees, row.DE_ICRS * galsim.degrees)
             
             # --- FIXED: ANTIPODE TRAP PREVENTION ---
-            # Ignore stars more than 5 degrees away from the boresight (behind telescope or far outside FOV)
-            if boresight.distanceTo(world_pos) > 5.0 * galsim.degrees:
+            # Ignore stars more than 75 degrees away from the boresight (behind telescope or far outside FOV)
+            if boresight.distanceTo(world_pos) > 75.0 * galsim.degrees:
                 continue
                 
             pixel_pos = self.wcs.toImage(world_pos)
