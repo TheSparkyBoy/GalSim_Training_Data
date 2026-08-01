@@ -8,34 +8,19 @@ import multiprocessing as mp
 from core.simulator import TelescopeSimulator
 import gc
 
+# [Keep init_worker and worker_bridge identical]
 global_master_table = None
 def init_worker(cache_file_path):
-    """
-    Runs exactly once per CPU core when the pool starts.
-    Loads the 1.5GB table directly into the core's local memory.
-    """
     global global_master_table
     global_master_table = pd.read_csv(cache_file_path, dtype={'source_id': str, 'star_id': str})
 
 def worker_bridge(task_config):
-    """
-    The main execution function for each image.
-    """
-    # 1. Grab the table from the core's local memory instead of the IPC pipe
     task_config['master_table'] = global_master_table
-    
-    # 2. Run the heavy C++ GalSim simulation
     simulator = TelescopeSimulator(task_config)
     result = simulator.run_pipeline()
-    
-    # 3. EXPLICIT RAM CLEARING COMMANDS
-    # Destroy the simulator object and the config reference
     del simulator
     del task_config
-    
-    # Force Python to immediately sweep the RAM and return it to the OS
     gc.collect()
-    
     return result
 
 class DatasetOrchestrator:
@@ -43,24 +28,23 @@ class DatasetOrchestrator:
         self.cfg = config
         self.base_dir = os.path.expanduser('~/GalSim_Training_Data')
         
-        # Calculate FOV
         fov = round(206.264806247096355 * (self.cfg['pixel_size_um'] / self.cfg['focal_length_mm']) * self.cfg['image_size_x'] / 3600.0, 2)
-        
-        # Strip the '.csv' extension from the catalog name for a cleaner folder
         catalog_name = self.cfg['cache_filename'].replace('.csv', '')
 
-        # --- DYNAMIC FOLDER NAMING LOGIC ---
+        # --- UPDATED: Dynamic Folder Naming Logic ---
         any_anomalies = any([
             self.cfg.get('anom_lens_distortion', False), 
             self.cfg.get('anom_false_stars', False),
             self.cfg.get('anom_drop_stars', False), 
             self.cfg.get('anom_pos_variation', False),
             self.cfg.get('anom_mag_variation', False), 
-            self.cfg.get('anom_motion_smear', False)
+            self.cfg.get('anom_motion_smear', False),
+            self.cfg.get('anom_defocus', False),
+            self.cfg.get('anom_dead_pixels', False),
+            self.cfg.get('anom_hot_pixels', False)
         ])
         anom_status = "mixed_anomalies" if any_anomalies else "perfect_optics"
         
-        # Build the dynamic dataset name
         self.dataset_name = (f"{self.cfg['mode']}{catalog_name}_seed_{self.cfg['global_seed']}_"
                              f"fov_{fov}_x_{self.cfg['image_size_x']}_y_{self.cfg['image_size_y']}_"
                              f"pxlsz_{self.cfg['pixel_size_um']}um_{self.cfg['focal_length_mm']}mm_"
@@ -75,6 +59,7 @@ class DatasetOrchestrator:
         self.manifest_path = os.path.join(self.base_dir, 'training_data', 'dataset_manifest.csv')
         self.master_table = None
 
+    # [Keep setup_directories, load_cache, get_starting_id, _get_random_sky_coord, _task_generator identical]
     def setup_directories(self):
         for path in self.dirs.values():
             os.makedirs(path, exist_ok=True)
@@ -85,7 +70,6 @@ class DatasetOrchestrator:
         if not os.path.exists(cache_file):
             raise FileNotFoundError(f"Cannot find {cache_file}. Run build_cache.py first!")
         self.master_table = pd.read_csv(cache_file, dtype={'source_id': str, 'star_id': str})
-        
         print(f"--> Loaded {len(self.master_table)} stars into RAM instantly.\n")
 
     def get_starting_id(self):
@@ -106,7 +90,6 @@ class DatasetOrchestrator:
         dec = np.degrees(np.arcsin(z))
         return round(ra, 4), round(dec, 4)
 
-    # --- O(1) CONSTANT-MEMORY STREAMING GENERATOR (Kept for Memory Safety) ---
     def _task_generator(self, starting_id):
         global_img_id = starting_id
         well_known_targets = [
@@ -146,13 +129,11 @@ class DatasetOrchestrator:
         print(f"\nFiring up {num_cores} autonomous cores for dataset: '{self.dataset_name}'...")
         
         generation_start = time.time()
-        manifest_data = []  # Restored to hold all data in RAM until the very end
+        manifest_data = [] 
         total_processed = 0
         
-        # Determine the exact path to the CSV file
         cache_file_path = os.path.join(self.base_dir, "master_star_caches", self.cfg['cache_filename'])
 
-        # Pass the initializer and the file path to the Pool
         with mp.Pool(processes=num_cores, 
                      maxtasksperchild=50, 
                      initializer=init_worker, 
@@ -163,7 +144,7 @@ class DatasetOrchestrator:
                 total_processed += 1
                 print(f"Image {result['image_id']} | Roll: {result['roll']:6.2f} | Stars: {result['stars_drawn']:4d} | Med. SNR: {result['median_snr']} | Time: {result['time_s']}s")
                 
-                # Store all results in the array without flushing
+                # --- UPDATED: Store all results including new anomaly statuses ---
                 manifest_data.append({
                     'image_id': result['image_id'],
                     'dataset_group': self.dataset_name,
@@ -185,12 +166,13 @@ class DatasetOrchestrator:
                     'anom_drop_on': self.cfg.get('anom_drop_stars', False),
                     'anom_pos_on': self.cfg.get('anom_pos_variation', False),
                     'anom_mag_on': self.cfg.get('anom_mag_variation', False),
-                    'anom_smear_on': self.cfg.get('anom_motion_smear', False)
+                    'anom_smear_on': self.cfg.get('anom_motion_smear', False),
+                    'anom_defocus_on': self.cfg.get('anom_defocus', False),
+                    'anom_dead_pix_on': self.cfg.get('anom_dead_pixels', False),
+                    'anom_hot_pix_on': self.cfg.get('anom_hot_pixels', False)
                 })
                     
-        # --- ORIGINAL END-OF-RUN FLUSHING RESTORED ---
         if manifest_data:
-            # Pandas handles the ordering of the final bulk array
             df = pd.DataFrame(manifest_data).sort_values(by='image_id')
             if os.path.exists(self.manifest_path):
                 df.to_csv(self.manifest_path, mode='a', header=False, index=False)
