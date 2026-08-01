@@ -38,6 +38,8 @@ class TelescopeSimulator:
         self.anom_pos = self.cfg.get('anom_pos_variation', False)
         self.anom_mag = self.cfg.get('anom_mag_variation', False)
         self.anom_smear = self.cfg.get('anom_motion_smear', False)
+        
+        # --- NEW ANOMALY TOGGLES ---
         self.anom_defocus = self.cfg.get('anom_defocus', False)
         self.anom_dead_pix = self.cfg.get('anom_dead_pixels', False)
         self.anom_hot_pix = self.cfg.get('anom_hot_pixels', False)
@@ -61,6 +63,7 @@ class TelescopeSimulator:
         self.pixel_scale = 206.264806247096355 * (self.cfg['pixel_size_um'] / self.cfg['focal_length_mm'])
         
         theta = np.radians(self.cfg['roll'])
+        # --- FIXED: Enforce negative determinant for standard astronomical sky parity ---
         dudx = -self.pixel_scale * np.cos(theta)
         dudy = self.pixel_scale * np.sin(theta)
         dvdx = self.pixel_scale * np.sin(theta)
@@ -73,7 +76,6 @@ class TelescopeSimulator:
         self.image.wcs = self.wcs
 
     def _apply_lens_distortion(self, x, y, cx, cy, max_r):
-        # [Keep existing _apply_lens_distortion method identical]
         dx = x - cx
         dy = y - cy
         r_norm = np.sqrt(dx**2 + dy**2) / max_r
@@ -84,14 +86,14 @@ class TelescopeSimulator:
     def draw_stars(self):
         # --- DEFOCUS ANOMALY ---
         if self.anom_defocus:
-            global_defocus = random.uniform(0.15, 0.35) * random.choice([-1, 1])
+            global_defocus = random.uniform(0.25, 0.5) * random.choice([-1, 1])
         else:
             global_defocus = random.uniform(-0.04, 0.04)
             
-        # 1. OPTIMIZATION: Calculate dynamic FOV radius in degrees based on sensor size
+        # --- OPTIMIZATION: Calculate dynamic FOV radius in degrees based on sensor size ---
         center_x, center_y = self.cfg['image_size_x'] / 2.0, self.cfg['image_size_y'] / 2.0
-        max_pixel_radius = np.sqrt(center_x**2 + center_y**2) 
-        max_fov_degrees = (max_pixel_radius * self.pixel_scale) / 3600.0
+        max_radius = np.sqrt(center_x**2 + center_y**2) 
+        max_fov_degrees = (max_radius * self.pixel_scale) / 3600.0
         safe_rejection_radius = (max_fov_degrees + 1.0) * galsim.degrees
         
         boresight = galsim.CelestialCoord(self.target_ra * galsim.degrees, self.target_dec * galsim.degrees)
@@ -128,7 +130,7 @@ class TelescopeSimulator:
                 
             world_pos = galsim.CelestialCoord(row.RA_ICRS * galsim.degrees, row.DE_ICRS * galsim.degrees)
             
-            # 2. OPTIMIZATION: Instantly drop stars outside the specific FOV + 1.0deg buffer
+            # --- OPTIMIZATION: Instantly drop stars outside the specific FOV + 1.0deg buffer ---
             if boresight.distanceTo(world_pos) > safe_rejection_radius:
                 continue
                 
@@ -200,5 +202,169 @@ class TelescopeSimulator:
         self.image.quantize()
         self.image.array[self.image.array > 4095] = 4095
 
-    # [Keep the rest of your methods exactly the same (measure_snr, _evaluate_merline_howell_telemetry, extract_final_labels, measure_global_background, export_files, run_pipeline)]
-    # ...
+    def measure_snr(self, x, y):
+        ix, iy = int(round(x)), int(round(y))
+        
+        if not (0 <= ix < self.cfg['image_size_x'] and 0 <= iy < self.cfg['image_size_y']):
+            return 0.0
+            
+        x_min = max(0, ix - 1)
+        x_max = min(self.cfg['image_size_x'], ix + 2)
+        y_min = max(0, iy - 1)
+        y_max = min(self.cfg['image_size_y'], iy + 2)
+        
+        cutout = self.image.array[y_min:y_max, x_min:x_max]
+        n_pix = cutout.size
+        
+        bg_mean = self.bg_stats['mean_adu']
+        bg_std = max(1e-5, self.bg_stats['std_adu'])
+        
+        net_signal = float(np.sum(cutout - bg_mean))
+        if net_signal <= 0:
+            return 0.0
+            
+        noise = float(np.sqrt(net_signal + (n_pix * (bg_std ** 2))))
+        
+        return float(round(net_signal / noise, 2))
+
+    def _evaluate_merline_howell_telemetry(self, img_array):
+        if img_array is None:
+            return 0, 0.0, 0.0, 0.0
+        try:
+            img_float = img_array.astype(np.float32)
+            total_pixels = img_float.size
+            
+            bg_mean = float(np.median(img_float))
+            mad = float(np.median(np.abs(img_float - bg_mean)))
+            bg_std = float(1.4826 * mad)
+            
+            if bg_std == 0:
+                bg_std = float(np.std(img_float))
+                if bg_std == 0: bg_std = 1.0
+                
+            bg_variance = bg_std ** 2
+            threshold = bg_mean + (5.0 * bg_std)
+            
+            structure = np.ones((3, 3), dtype=int)
+            labeled_array, num_detected_stars = ndi.label(img_float > threshold, structure=structure)
+            
+            if num_detected_stars > 0:
+                n_px = np.array(ndi.sum(np.ones_like(img_float), labeled_array, index=range(1, num_detected_stars + 1)))
+                net_signal_img = img_float - bg_mean
+                N_star = np.array(ndi.sum(net_signal_img, labeled_array, index=range(1, num_detected_stars + 1)))
+                
+                total_star_pixels = np.sum(n_px)
+                n_B = max(1.0, float(total_pixels - total_star_pixels))
+                
+                bg_term = n_px * (1.0 + (n_px / n_B)) * bg_variance
+                radicand = np.maximum(1e-6, N_star + bg_term)
+                
+                star_snrs = N_star / np.sqrt(radicand)
+                median_snr = float(np.median(star_snrs))
+            else:
+                median_snr = 0.0
+                
+            return int(num_detected_stars), round(bg_mean, 2), round(bg_std, 2), round(median_snr, 2)
+        except Exception as e:
+            print(f"[WARNING] Merline & Howell simulator evaluation failed: {e}")
+            return 0, 0.0, 0.0, 0.0
+
+    def extract_final_labels(self):
+        for star in self.temp_star_coords:
+            final_snr = self.measure_snr(star['x'], star['y'])
+            if final_snr < 1.0: continue
+            
+            self.star_snr_list.append(final_snr)
+            self.label_data.append([
+                star['id'], round(star['x'], 2), round(star['y'], 2), 
+                star['mag'], self.cfg['focal_length_mm'], self.cfg['exposure_time'], 
+                final_snr, 0 
+            ])
+            
+        if self.anom_false:
+            self.false_stars_injected = np.random.poisson(8) 
+            for _ in range(self.false_stars_injected):
+                fx = random.uniform(0, self.cfg['image_size_x'])
+                fy = random.uniform(0, self.cfg['image_size_y'])
+                fmag = random.uniform(5.0, 11.0)
+                fflux = self.F0 * 10 ** ((-fmag) / 2.5)
+                
+                false_psf = galsim.Gaussian(fwhm=1.5).withFlux(fflux)
+                false_psf.drawImage(image=self.image, center=galsim.PositionD(fx, fy), add_to_image=True, method='phot')
+                
+                self.temp_false_coords.append({
+                    'id': '-1', 
+                    'x': fx,
+                    'y': fy,
+                    'mag': round(fmag, 3)
+                })
+            
+        for star in self.temp_false_coords:
+            final_snr = self.measure_snr(star['x'], star['y'])
+            if final_snr < 1.0: continue
+            
+            self.label_data.append([
+                star['id'], round(star['x'], 2), round(star['y'], 2), 
+                star['mag'], self.cfg['focal_length_mm'], self.cfg['exposure_time'], 
+                final_snr, 1 
+            ])
+
+    def measure_global_background(self):
+        bg_mean_adu, bg_median_adu, bg_std_adu = sigma_clipped_stats(self.image.array, sigma=3.0, maxiters=5)
+        gain_e_per_adu = 1.0 
+        return {
+            'mean_adu': round(bg_mean_adu, 2), 'std_adu': round(bg_std_adu, 2),
+            'mean_e': round(bg_mean_adu * gain_e_per_adu, 2), 'std_e': round(bg_std_adu * gain_e_per_adu, 2)
+        }
+
+    def export_files(self):
+        fits_path = os.path.join(self.cfg['dirs']['fits'], f'{self.image_id:07d}.fits')
+        png_path = os.path.join(self.cfg['dirs']['png'], f'{self.image_id:07d}.png')
+        csv_path = os.path.join(self.cfg['dirs']['csv'], f'{self.image_id:07d}.csv')
+        
+        self.image.write(fits_path)
+        
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time', 'snr', 'is_artifact'])
+            writer.writerows(self.label_data)
+            
+        fig = plt.figure(dpi=300, figsize=(16, 9), facecolor='black')
+        img_array = self.image.array
+        vmin = max(1.0, np.percentile(img_array, 1))
+        vmax = np.max(img_array)
+        if vmax <= vmin: vmax = vmin + 10.0
+            
+        plt.imshow(img_array, cmap='gray', origin='lower', norm=LogNorm(vmin=vmin, vmax=vmax), interpolation='none')
+        plt.title(f"Image {self.image_id:07d} (RA:{self.target_ra:.2f}, DEC:{self.target_dec:.2f} | Roll: {self.cfg['roll']:.1f}deg)", color='white')
+        plt.axis('off')
+        plt.savefig(png_path, bbox_inches='tight', facecolor='black')
+        plt.close(fig)
+
+    def run_pipeline(self):
+        start_time = time.time()
+        self.setup_optics_and_wcs()
+        self.draw_stars()
+        self.apply_sensor_noise()
+        self.bg_stats = self.measure_global_background()
+        self.extract_final_labels()
+        self.export_files()
+        
+        final_pixel_array = self.image.array
+        emp_stars, bg_mean, bg_std, med_snr = self._evaluate_merline_howell_telemetry(final_pixel_array)
+        
+        return {
+            'image_id': self.cfg['image_id'],
+            'ra': self.cfg['ra'],
+            'dec': self.cfg['dec'],
+            'roll': self.cfg['roll'],
+            'time_s': round(time.time() - start_time, 2),
+            'stars_drawn': emp_stars,
+            'bg_mean_e': bg_mean,
+            'bg_std_e': bg_std,
+            'median_snr': med_snr,
+            'distorted_stars': getattr(self, 'distorted_count', 0),
+            'dropped_stars': getattr(self, 'dropped_count', 0),
+            'false_stars': getattr(self, 'false_count', 0),
+            'smear_px': getattr(self, 'smear_length', 0)
+        }
