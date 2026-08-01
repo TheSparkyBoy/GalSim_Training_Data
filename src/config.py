@@ -3,13 +3,13 @@
 DATASET_CONFIG = {
     'global_seed': 53,           # Global random seed for reproducibility
     'mode': "opticalPSF_",
-    'total_images': 10000,          
+    'total_images': 10,          
     'exposure_time': 5.0,        # seconds
-    'focal_length_mm': 416,      # millimeters
+    'focal_length_mm': 100,      # millimeters
     'roll': 0.0,                 # degrees
     'pixel_size_um': 2.9,        # physical size of a pixel in micrometers
-    'image_size_x': 3840,        # horizontal pixels
-    'image_size_y': 2160,        # vertical pixels
+    'image_size_x': 1024,        # horizontal pixels
+    'image_size_y': 1024,        # vertical pixels
     
     # --- Anomaly Toggles ---
     'anom_lens_distortion': False,
