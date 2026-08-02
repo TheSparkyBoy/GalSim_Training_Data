@@ -1,10 +1,10 @@
 # config.py
 
 DATASET_CONFIG = {
-    'global_seed': 53,           # Global random seed for reproducibility
+    'global_seed': 55,           # Global random seed for reproducibility
     'mode': "opticalPSF_",
-    'total_images': 10,          
-    'exposure_time': 5.0,        # seconds
+    'total_images': 10000,          
+    'exposure_time': 0.5,        # seconds
     'focal_length_mm': 100,      # millimeters
     'roll': 0.0,                 # degrees
     'pixel_size_um': 2.9,        # physical size of a pixel in micrometers
