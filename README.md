@@ -68,3 +68,7 @@ Compile executable for fits extractor.
 ```
 pyinstaller --name "Fits Extractor" --onefile --windowed fits_extractor_gui.py
 ```
+Compile star RA and DEC extractor
+```
+pyinstaller --name "Build Massive Star Ledge" --onefile --windowed build_massive_star_ledger.py
+```
