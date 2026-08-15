@@ -12,6 +12,9 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from astropy.stats import sigma_clipped_stats
+from astropy.time import Time
+from astropy.coordinates import EarthLocation, SkyCoord, AltAz
+import astropy.units as u
 
 class TelescopeSimulator:
     """Handles the physical simulation and rendering of a single astronomical image."""
@@ -63,7 +66,6 @@ class TelescopeSimulator:
         self.pixel_scale = 206.264806247096355 * (self.cfg['pixel_size_um'] / self.cfg['focal_length_mm'])
         
         theta = np.radians(self.cfg['roll'])
-        # --- FIXED: Enforce negative determinant for standard astronomical sky parity ---
         dudx = -self.pixel_scale * np.cos(theta)
         dudy = self.pixel_scale * np.sin(theta)
         dvdx = self.pixel_scale * np.sin(theta)
@@ -79,29 +81,64 @@ class TelescopeSimulator:
         dx = x - cx
         dy = y - cy
         r_norm = np.sqrt(dx**2 + dy**2) / max_r
-        k1 = 0.08 
+        
+        # APO flat-field astrograph distortion coefficient
+        k1 = 1e-6 
         distortion_factor = 1.0 + (k1 * (r_norm ** 2))
         return cx + (dx * distortion_factor), cy + (dy * distortion_factor)
 
     def draw_stars(self):
-        # --- DEFOCUS ANOMALY ---
+        # --- DYNAMIC ZENITH ANGLE CALCULATION ---
+        obs_lat = self.cfg.get('obs_lat', 33.3062) 
+        obs_lon = self.cfg.get('obs_lon', -111.8413) 
+        obs_alt = self.cfg.get('obs_alt', 370.0) 
+        obs_time_str = self.cfg.get('obs_time_utc', '2026-08-15T08:00:00')
+        
+        location = EarthLocation(lat=obs_lat*u.deg, lon=obs_lon*u.deg, height=obs_alt*u.m)
+        obstime = Time(obs_time_str)
+        boresight_coord = SkyCoord(ra=self.target_ra*u.deg, dec=self.target_dec*u.deg, frame='icrs')
+        
+        # Transform image center to local Altitude/Azimuth
+        altaz = boresight_coord.transform_to(AltAz(obstime=obstime, location=location))
+        zenith_angle_rad = (90.0 * u.deg - altaz.alt).to(u.rad).value
+        
+        # Cap Zenith Angle at 85 degrees to prevent Secant from shooting to infinity near the horizon
+        if zenith_angle_rad >= (85.0 * np.pi / 180.0):
+            dynamic_sec_zeta = 11.47 
+        else:
+            dynamic_sec_zeta = 1.0 / np.cos(zenith_angle_rad)
+
+        # --- DEFOCUS ANOMALY (Thermal Expansion OPD) ---
         if self.anom_defocus:
-            global_defocus = random.uniform(0.25, 0.5) * random.choice([-1, 1])
+            L = self.cfg['focal_length_mm'] * 1e-3         
+            alpha = 23e-6                                  
+            delta_T = self.cfg.get('delta_T_celsius', 2.0) 
+            aperture_mm = self.cfg.get('aperture_mm', 65.0)                             
+            f_ratio = self.cfg['focal_length_mm'] / aperture_mm 
+            lam = 500e-9                                   
+            
+            OPD = (L * alpha * delta_T) / (8.0 * (f_ratio ** 2))
+            global_defocus = (OPD / lam) * random.choice([-1, 1])
         else:
             global_defocus = random.uniform(-0.04, 0.04)
             
-        # --- OPTIMIZATION: Calculate dynamic FOV radius in degrees based on sensor size ---
+        # --- DYNAMIC FOV OPTIMIZATION ---
         center_x, center_y = self.cfg['image_size_x'] / 2.0, self.cfg['image_size_y'] / 2.0
         max_radius = np.sqrt(center_x**2 + center_y**2) 
         max_fov_degrees = (max_radius * self.pixel_scale) / 3600.0
         safe_rejection_radius = (max_fov_degrees + 1.0) * galsim.degrees
         
-        boresight = galsim.CelestialCoord(self.target_ra * galsim.degrees, self.target_dec * galsim.degrees)
+        boresight_gs = galsim.CelestialCoord(self.target_ra * galsim.degrees, self.target_dec * galsim.degrees)
         
-        # --- EXPOSURE-DEPENDENT SMEAR ANOMALY ---
+        # --- EXPOSURE-DEPENDENT SMEAR ANOMALY (Tracking Error) ---
         if self.anom_smear:
-            base_smear = random.uniform(0.1, 0.8)
-            smear_length_pixels = base_smear * self.cfg['exposure_time']
+            PE_rate = 0.2                                  
+            t_exp = self.cfg['exposure_time']              
+            F = self.cfg['focal_length_mm'] * 1e-3         
+            d_pixel = self.cfg['pixel_size_um'] * 1e-6     
+            arcsec_conversion = 206265.0                   
+            
+            smear_length_pixels = (PE_rate * t_exp * F) / (arcsec_conversion * d_pixel)
         else:
             smear_length_pixels = 0.0
             
@@ -119,19 +156,34 @@ class TelescopeSimulator:
             base_mag = getattr(row, 'Gmag', np.nan)
             if pd.isna(base_mag): continue
                 
-            # --- UPDATED: Realistic Photometric Scintillation (std dev: 0.25 mag) ---
-            mag = base_mag + np.random.normal(0, 0.25) if self.anom_mag else base_mag
+            # --- ATMOSPHERIC SCINTILLATION (Magnitude Variation) ---
+            if self.anom_mag:
+                D = self.cfg.get('aperture_mm', 65.0) / 10.0   # Convert mm to cm                           
+                h = obs_alt                                    # Dynamic Observatory altitude (m)
+                H_scale = 8000.0                               
+                
+                # Apply the dynamically calculated secant of the zenith angle
+                variance = 0.09 * (D ** (-7.0/3.0)) * (dynamic_sec_zeta ** 3) * np.exp(-2.0 * h / H_scale)
+                sigma_I = np.sqrt(variance)
+                
+                sigma_mag = 1.0857 * sigma_I
+                mag = base_mag + np.random.normal(0, sigma_mag)
+            else:
+                mag = base_mag
             
+            # --- DETECTION FLOOR (Faint Object Masking) ---
             if self.anom_drop:
-                p_detect = 1.0 / (1.0 + np.exp(3.0 * (mag - 10.5)))
+                textbook_limit = 10.5
+                deep_limit = textbook_limit + 1.8
+                
+                p_detect = 1.0 / (1.0 + np.exp(3.0 * (mag - deep_limit)))
                 if random.random() > p_detect:
                     self.stars_dropped += 1 
                     continue 
                 
             world_pos = galsim.CelestialCoord(row.RA_ICRS * galsim.degrees, row.DE_ICRS * galsim.degrees)
             
-            # --- OPTIMIZATION: Instantly drop stars outside the specific FOV + 1.0deg buffer ---
-            if boresight.distanceTo(world_pos) > safe_rejection_radius:
+            if boresight_gs.distanceTo(world_pos) > safe_rejection_radius:
                 continue
                 
             pixel_pos = self.wcs.toImage(world_pos)
@@ -140,10 +192,18 @@ class TelescopeSimulator:
             if self.anom_lens:
                 x, y = self._apply_lens_distortion(x, y, center_x, center_y, max_radius)
                 
+            # --- ASTROMETRIC JITTER (Seeing Position Variation) ---
             if self.anom_pos:
-                # --- UPDATED: Realistic Astrometric Jitter/Seeing (std dev: 0.6 pixels) ---
-                x += np.random.normal(0, 0.6)
-                y += np.random.normal(0, 0.6)
+                lam = 500e-9                               
+                F = self.cfg['focal_length_mm'] * 1e-3     
+                r_0 = 0.1                                  
+                fwhm_factor = 2.355                        
+                d_pixel = self.cfg['pixel_size_um'] * 1e-6 
+                
+                sigma_px = (0.98 * lam * F) / (r_0 * fwhm_factor * d_pixel)
+                
+                x += np.random.normal(0, sigma_px)
+                y += np.random.normal(0, sigma_px)
                 
             final_pos = galsim.PositionD(x, y)
             
@@ -186,18 +246,26 @@ class TelescopeSimulator:
         self.image.addNoise(galsim.PoissonNoise(rng))
         self.image.addNoise(galsim.GaussianNoise(rng, sigma=0.7))
         
-        # --- DEFECTIVE SENSOR ANOMALIES ---
+        # --- THERMAL ADC SATURATION (Hot Pixels) ---
         if self.anom_hot_pix:
-            num_hot = np.random.poisson(200) # Inject random clusters of max-ADU pixels
+            N_bits = 12                                    
+            ADU_max = (2 ** N_bits) - 1
+            
+            num_hot = np.random.poisson(200) 
             hx = np.random.randint(0, self.cfg['image_size_x'], num_hot)
             hy = np.random.randint(0, self.cfg['image_size_y'], num_hot)
-            self.image.array[hy, hx] = 4095.0
+            self.image.array[hy, hx] = float(ADU_max)
             
+        # --- SENSOR DEFECTS (Dead Pixels) ---
         if self.anom_dead_pix:
-            num_dead = np.random.poisson(200) # Inject random clusters of zero-ADU pixels
+            ADU_raw = 0.0                                  
+            ADU_bias = 0.0                                 
+            ADU_calibrated = ADU_raw - ADU_bias
+            
+            num_dead = np.random.poisson(200) 
             dx = np.random.randint(0, self.cfg['image_size_x'], num_dead)
             dy = np.random.randint(0, self.cfg['image_size_y'], num_dead)
-            self.image.array[dy, dx] = 0.0
+            self.image.array[dy, dx] = ADU_calibrated
             
         self.image.quantize()
         self.image.array[self.image.array > 4095] = 4095
@@ -281,8 +349,16 @@ class TelescopeSimulator:
                 final_snr, 0 
             ])
             
+        # --- COSMIC RAYS / DEBRIS (False Stars) ---
         if self.anom_false:
-            self.false_stars_injected = np.random.poisson(8) 
+            Phi = 1.5                                      
+            W = self.cfg['image_size_x'] * self.cfg['pixel_size_um'] * 1e-4  
+            H = self.cfg['image_size_y'] * self.cfg['pixel_size_um'] * 1e-4  
+            t_exp_min = self.cfg['exposure_time'] / 60.0   
+            
+            N_expected = Phi * W * H * t_exp_min
+            
+            self.false_stars_injected = np.random.poisson(N_expected) 
             for _ in range(self.false_stars_injected):
                 fx = random.uniform(0, self.cfg['image_size_x'])
                 fy = random.uniform(0, self.cfg['image_size_y'])
