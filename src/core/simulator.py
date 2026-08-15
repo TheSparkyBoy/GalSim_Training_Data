@@ -428,12 +428,16 @@ class TelescopeSimulator:
         
         final_pixel_array = self.image.array
         emp_stars, bg_mean, bg_std, med_snr = self._evaluate_merline_howell_telemetry(final_pixel_array)
+        fov_x_deg = (self.cfg['image_size_x'] * self.pixel_scale) / 3600.0
+        fov_y_deg = (self.cfg['image_size_y'] * self.pixel_scale) / 3600.0
         
         return {
             'image_id': self.cfg['image_id'],
             'ra': self.cfg['ra'],
             'dec': self.cfg['dec'],
             'roll': self.cfg['roll'],
+            'fov_x_deg': round(fov_x_deg, 3), # Added to output
+            'fov_y_deg': round(fov_y_deg, 3), # Added to output
             'time_s': round(time.time() - start_time, 2),
             'stars_drawn': emp_stars,
             'bg_mean_e': bg_mean,

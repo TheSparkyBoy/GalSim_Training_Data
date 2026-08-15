@@ -142,14 +142,16 @@ class DatasetOrchestrator:
             
             for result in pool.imap_unordered(worker_bridge, task_stream, chunksize=1):
                 total_processed += 1
-                print(f"Image {result['image_id']} | Roll: {result['roll']:6.2f} | Stars: {result['stars_drawn']:4d} | Med. SNR: {result['median_snr']} | Time: {result['time_s']}s")
                 
-                # --- UPDATED: Store all results including new anomaly statuses ---
+                print(f"Image {result['image_id']} | FOV: {result['fov_x_deg']}x{result['fov_y_deg']}° | Roll: {result['roll']:6.2f} | Stars: {result['stars_drawn']:4d} | Med. SNR: {result['median_snr']} | Time: {result['time_s']}s")
+                
                 manifest_data.append({
                     'image_id': result['image_id'],
                     'dataset_group': self.dataset_name,
                     'ra': result['ra'],
                     'dec': result['dec'],
+                    'fov_x_deg': result['fov_x_deg'], # Added to manifest
+                    'fov_y_deg': result['fov_y_deg'], # Added to manifest
                     'camera_roll': result['roll'],
                     'focal_length_mm': self.cfg['focal_length_mm'],
                     'exposure_time_s': self.cfg['exposure_time'],
