@@ -15,22 +15,22 @@ DATASET_CONFIG = {
     'roll': 0.0,                 # degrees
     
     # --- Environmental & Location Conditions ---
-    'delta_T_celsius': 2.0,                  # Drop in ambient temperature
+    'delta_T_celsius': 20.0,                  # Drop in ambient temperature
     'obs_lat': 33.3062,                      # Observatory Latitude (Degrees)
     'obs_lon': -111.8413,                    # Observatory Longitude (Degrees)
     'obs_alt': 370.0,                        # Observatory Altitude above sea level (Meters)
     'obs_time_utc': '2026-08-15T08:17:00',   # UTC Time of observation
     
     # --- Anomaly Toggles ---
-    'anom_lens_distortion': False,
-    'anom_false_stars': False,
-    'anom_drop_stars': False,
-    'anom_pos_variation': False,
-    'anom_mag_variation': False,
-    'anom_motion_smear': False,
-    'anom_defocus': False,
-    'anom_dead_pixels': False,
-    'anom_hot_pixels': False,
+    'anom_lens_distortion': True,
+    'anom_false_stars': True,
+    'anom_drop_stars': True,
+    'anom_pos_variation': True,
+    'anom_mag_variation': True,
+    'anom_motion_smear': True,
+    'anom_defocus': True,
+    'anom_dead_pixels': True,
+    'anom_hot_pixels': True,
     
     # Specific catalog to pull from your cache directory
     'cache_filename': "GAIADR3_master_star_cache_12.csv",
