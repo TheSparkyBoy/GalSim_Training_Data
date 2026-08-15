@@ -57,11 +57,27 @@ class TelescopeSimulator:
         self.label_data = []
         self.star_snr_list = []
         
-        self.universal_baseline = 1e6 
-        self.aperature_area_cm2 = np.pi * (6.5/2)**2 
-        self.quantum_efficiency = 0.91 * 0.9 
-        self.F0 = self.universal_baseline * self.aperature_area_cm2 * self.cfg['exposure_time'] * self.quantum_efficiency
-        
+        aperture_diameter_cm = self.cfg.get('aperture_diameter_mm', 65.0) / 10.0
+        aperture_area_cm2 = np.pi * (aperture_diameter_cm / 2.0) ** 2
+        zero_point = self.cfg.get('zero_point_photons_cm2_s_mag0', 8.47e5)
+        throughput = self.cfg.get('system_throughput', 0.91 * 0.9)
+        self.F0 = zero_point * aperture_area_cm2 * self.cfg['exposure_time'] * throughput
+        self.saturated_stars = 0
+        self.saturated_pixels = 0
+
+    def sensor_limits(self):
+        """Return independent physical and digitizer limits in electrons."""
+        gain = self.cfg['gain_e_per_adu']
+        bias = self.cfg['bias_adu']
+        adc_max = (1 << self.cfg['adc_bits']) - 1
+        digital_well_e = max(0.0, (adc_max - bias) * gain)
+        saturation_e = min(self.cfg['full_well_e'], digital_well_e)
+        return {
+            'adc_max': adc_max,
+            'digital_well_e': digital_well_e,
+            'saturation_e': saturation_e,
+        }
+
     def setup_optics_and_wcs(self):
         self.pixel_scale = 206.264806247096355 * (self.cfg['pixel_size_um'] / self.cfg['focal_length_mm'])
         
@@ -222,13 +238,21 @@ class TelescopeSimulator:
                     gsparams=galsim.GSParams(folding_threshold=1e-3, maximum_fft_size=32768)
                 )
                 
+                # The physical Airy pattern is much narrower than a pixel for
+                # this 100 mm setup.  Include the configured seeing/focus term
+                # so the target PSF width is modeled rather than ignored.
+                psf_components = [optical_psf]
+                target_fwhm_pixels = self.cfg.get('psf_fwhm_pixels', 0.0)
+                if target_fwhm_pixels and target_fwhm_pixels > 0:
+                    psf_components.append(galsim.Gaussian(
+                        fwhm=target_fwhm_pixels * self.pixel_scale
+                    ))
                 if self.anom_smear and motion_smear is not None:
-                    final_profile = galsim.Convolve([optical_psf, motion_smear])
-                else:
-                    final_profile = optical_psf
+                    psf_components.append(motion_smear)
+                final_profile = galsim.Convolve(psf_components)
                     
                 star = final_profile.withFlux(flux)
-                star.drawImage(image=self.image, center=final_pos, add_to_image=True, method='phot')
+                star.drawImage(image=self.image, center=final_pos, add_to_image=True, method='fft')
                 
                 raw_id_str = str(getattr(row, 'source_id', getattr(row, 'star_id', '0'))).split('.')[0]
                 
@@ -241,12 +265,70 @@ class TelescopeSimulator:
                 self.stars_drawn += 1
 
     def apply_sensor_noise(self):
-        self.image += 1500.0 
-        rng = galsim.BaseDeviate(int(self.image_id))
+        rng = galsim.BaseDeviate(self.worker_seed + 100000)
+
+        # ---------------------------------------------------
+        # 1. IMAGE IS STILL IN ELECTRONS HERE
+        # ---------------------------------------------------
+
+        gain = self.cfg['gain_e_per_adu']
+        bias = self.cfg['bias_adu']
+        target_background_adu = self.cfg.get('target_background_adu')
+        if target_background_adu is None:
+            # Physical sky model, used when no empirical background target is set.
+            background_e = (
+                self.cfg['sky_e_per_pix_s'] * self.cfg['exposure_time']
+            )
+        else:
+            # A background pedestal must be added before Poisson sampling.  An
+            # ADU bias added later would brighten the image without adding grain.
+            background_e = max(0.0, (target_background_adu - bias) * gain)
+
+        self.image += background_e
+
         self.image.addNoise(galsim.PoissonNoise(rng))
-        self.image.addNoise(galsim.GaussianNoise(rng, sigma=0.7))
-        
-        # --- THERMAL ADC SATURATION (Hot Pixels) ---
+
+        # ---------------------------------------------------
+        # 2. SENSOR FULL-WELL SATURATION
+        # ---------------------------------------------------
+
+        limits = self.sensor_limits()
+        np.clip(
+            self.image.array,
+            0.0,
+            limits['saturation_e'],
+            out=self.image.array
+        )
+
+        # ---------------------------------------------------
+        # 3. READ NOISE -- STILL ELECTRONS
+        # ---------------------------------------------------
+
+        self.image.addNoise(
+            galsim.GaussianNoise(
+                rng,
+                sigma=self.cfg['read_noise_e']
+            )
+        )
+
+        # ---------------------------------------------------
+        # 4. ANALOG/DIGITAL CONVERSION: e- -> ADU
+        # ---------------------------------------------------
+
+        adu = self.image.array / gain
+        adu += bias
+
+        # ---------------------------------------------------
+        # 5. ADC QUANTIZATION / SATURATION
+        # ---------------------------------------------------
+
+        adc_max = limits['adc_max']
+
+        adu = np.rint(adu)
+        adu = np.clip(adu, 0, adc_max)
+
+        self.image.array[:] = adu.astype(np.float32)
+
         if self.anom_hot_pix:
             N_bits = 12                                    
             ADU_max = (2 ** N_bits) - 1
@@ -254,7 +336,7 @@ class TelescopeSimulator:
             num_hot = np.random.poisson(200) 
             hx = np.random.randint(0, self.cfg['image_size_x'], num_hot)
             hy = np.random.randint(0, self.cfg['image_size_y'], num_hot)
-            self.image.array[hy, hx] = float(ADU_max)
+            self.image.array[hy, hx] = adc_max
             
         # --- SENSOR DEFECTS (Dead Pixels) ---
         if self.anom_dead_pix:
@@ -266,9 +348,9 @@ class TelescopeSimulator:
             dx = np.random.randint(0, self.cfg['image_size_x'], num_dead)
             dy = np.random.randint(0, self.cfg['image_size_y'], num_dead)
             self.image.array[dy, dx] = ADU_calibrated
-            
-        self.image.quantize()
-        self.image.array[self.image.array > 4095] = 4095
+
+        self.saturated_pixels = int(np.count_nonzero(self.image.array >= adc_max))
+
 
     def measure_snr(self, x, y):
         ix, iy = int(round(x)), int(round(y))
@@ -290,7 +372,12 @@ class TelescopeSimulator:
         net_signal = float(np.sum(cutout - bg_mean))
         if net_signal <= 0:
             return 0.0
-            
+
+        gain = self.cfg['gain_e_per_adu']
+
+        net_signal_e = net_signal * gain
+        bg_std_e = bg_std * gain
+
         noise = float(np.sqrt(net_signal + (n_pix * (bg_std ** 2))))
         
         return float(round(net_signal / noise, 2))
@@ -343,14 +430,26 @@ class TelescopeSimulator:
             if final_snr < 1.0: continue
             
             self.star_snr_list.append(final_snr)
+            peak_adu = self._local_peak_adu(star['x'], star['y'])
+            is_saturated = int(peak_adu >= self.sensor_limits()['adc_max'])
+            self.saturated_stars += is_saturated
             self.label_data.append([
                 star['id'], round(star['x'], 2), round(star['y'], 2), 
                 star['mag'], self.cfg['focal_length_mm'], self.cfg['exposure_time'], 
-                final_snr, 0 
+                final_snr, 0, peak_adu, is_saturated
             ])
             
         # --- COSMIC RAYS / DEBRIS (False Stars) ---
         if self.anom_false:
+            gain = self.cfg['gain_e_per_adu']
+            rng = galsim.BaseDeviate(self.worker_seed + 200000)
+
+            # Render artifacts in ELECTRONS on a scratch frame so they go
+            # through the same e- -> ADU chain as the real stars.
+            scratch = galsim.ImageF(
+                self.cfg['image_size_x'], self.cfg['image_size_y'], wcs=self.wcs
+            )
+
             Phi = 1.5                                      
             W = self.cfg['image_size_x'] * self.cfg['pixel_size_um'] * 1e-4  
             H = self.cfg['image_size_y'] * self.cfg['pixel_size_um'] * 1e-4  
@@ -365,32 +464,55 @@ class TelescopeSimulator:
                 fmag = random.uniform(5.0, 11.0)
                 fflux = self.F0 * 10 ** ((-fmag) / 2.5)
                 
-                false_psf = galsim.Gaussian(fwhm=1.5).withFlux(fflux)
-                false_psf.drawImage(image=self.image, center=galsim.PositionD(fx, fy), add_to_image=True, method='phot')
-                
+                false_psf = galsim.Gaussian(
+                    fwhm=self.cfg.get('psf_fwhm_pixels', 1.5) * self.pixel_scale
+                ).withFlux(fflux)
+                false_psf.drawImage(image=scratch, center=galsim.PositionD(fx, fy), add_to_image=True, method='phot', rng=rng)
+
                 self.temp_false_coords.append({
-                    'id': '-1', 
-                    'x': fx,
-                    'y': fy,
-                    'mag': round(fmag, 3)
+                    'id': '-1', 'x': fx, 'y': fy, 'mag': round(fmag, 3)
                 })
-            
+
+            # Same sensor chain: full well -> gain -> quantize -> ADC clip.
+            limits = self.sensor_limits()
+            np.clip(scratch.array, 0.0, limits['saturation_e'], out=scratch.array)
+            self.image.array[:] = np.clip(
+                np.rint(self.image.array + scratch.array / gain), 0, limits['adc_max']
+            ).astype(np.float32)
+            self.saturated_pixels = int(
+                np.count_nonzero(self.image.array >= limits['adc_max'])
+            )
+
         for star in self.temp_false_coords:
             final_snr = self.measure_snr(star['x'], star['y'])
             if final_snr < 1.0: continue
             
+            peak_adu = self._local_peak_adu(star['x'], star['y'])
+            is_saturated = int(peak_adu >= self.sensor_limits()['adc_max'])
+            self.saturated_stars += is_saturated
             self.label_data.append([
                 star['id'], round(star['x'], 2), round(star['y'], 2), 
                 star['mag'], self.cfg['focal_length_mm'], self.cfg['exposure_time'], 
-                final_snr, 1 
+                final_snr, 1, peak_adu, is_saturated
             ])
+
+    def _local_peak_adu(self, x, y):
+        """Return the brightest pixel in a 3x3 label-centered aperture."""
+        ix, iy = int(round(x)), int(round(y))
+        x_min, x_max = max(0, ix - 1), min(self.cfg['image_size_x'], ix + 2)
+        y_min, y_max = max(0, iy - 1), min(self.cfg['image_size_y'], iy + 2)
+        if x_min >= x_max or y_min >= y_max:
+            return 0.0
+        return float(np.max(self.image.array[y_min:y_max, x_min:x_max]))
 
     def measure_global_background(self):
         bg_mean_adu, bg_median_adu, bg_std_adu = sigma_clipped_stats(self.image.array, sigma=3.0, maxiters=5)
-        gain_e_per_adu = 1.0 
+        gain = self.cfg['gain_e_per_adu']
+        bias = self.cfg['bias_adu']
         return {
             'mean_adu': round(bg_mean_adu, 2), 'std_adu': round(bg_std_adu, 2),
-            'mean_e': round(bg_mean_adu * gain_e_per_adu, 2), 'std_e': round(bg_std_adu * gain_e_per_adu, 2)
+            'mean': round((bg_mean_adu - bias) * gain, 2),
+            'std': round(bg_std_adu * gain, 2)
         }
 
     def export_files(self):
@@ -402,7 +524,10 @@ class TelescopeSimulator:
         
         with open(csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time', 'snr', 'is_artifact'])
+            writer.writerow([
+                'star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length',
+                'exposure_time', 'snr', 'is_artifact', 'peak_adu', 'is_saturated'
+            ])
             writer.writerows(self.label_data)
             
         fig = plt.figure(dpi=300, figsize=(16, 9), facecolor='black')
@@ -428,9 +553,12 @@ class TelescopeSimulator:
         
         final_pixel_array = self.image.array
         emp_stars, bg_mean, bg_std, med_snr = self._evaluate_merline_howell_telemetry(final_pixel_array)
+
+        gain = self.cfg['gain_e_per_adu']
+        bias = self.cfg['bias_adu']
         fov_x_deg = (self.cfg['image_size_x'] * self.pixel_scale) / 3600.0
         fov_y_deg = (self.cfg['image_size_y'] * self.pixel_scale) / 3600.0
-        
+
         return {
             'image_id': self.cfg['image_id'],
             'ra': self.cfg['ra'],
@@ -440,11 +568,14 @@ class TelescopeSimulator:
             'fov_y_deg': round(fov_y_deg, 3), # Added to output
             'time_s': round(time.time() - start_time, 2),
             'stars_drawn': emp_stars,
-            'bg_mean_e': bg_mean,
-            'bg_std_e': bg_std,
+            'bg_mean_e': round((bg_mean - bias) * gain, 2),
+            'bg_std_e': round(bg_std * gain, 2),
             'median_snr': med_snr,
-            'distorted_stars': getattr(self, 'distorted_count', 0),
-            'dropped_stars': getattr(self, 'dropped_count', 0),
-            'false_stars': getattr(self, 'false_count', 0),
-            'smear_px': getattr(self, 'smear_length', 0)
+            'distorted_stars': 0,
+            'dropped_stars': self.stars_dropped,
+            'false_stars': self.false_stars_injected,
+            'smear_px': self.smear_applied,
+            'saturated_stars': self.saturated_stars,
+            'saturated_pixels': self.saturated_pixels,
+            'sensor_saturation_e': round(self.sensor_limits()['saturation_e'], 2)
         }

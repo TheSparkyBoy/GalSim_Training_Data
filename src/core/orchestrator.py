@@ -143,7 +143,7 @@ class DatasetOrchestrator:
             for result in pool.imap_unordered(worker_bridge, task_stream, chunksize=1):
                 total_processed += 1
                 
-                print(f"Image {result['image_id']} | FOV: {result['fov_x_deg']}x{result['fov_y_deg']}° | Roll: {result['roll']:6.2f} | Stars: {result['stars_drawn']:4d} | Med. SNR: {result['median_snr']} | Time: {result['time_s']}s")
+                print(f"Image {result['image_id']} | FOV: {result['fov_x_deg']}x{result['fov_y_deg']}° | Roll: {result['roll']:6.2f} | Stars: {result['stars_drawn']:4d} | Saturated: {result['saturated_stars']:3d} ({result['saturated_pixels']} px) | Med. SNR: {result['median_snr']} | Time: {result['time_s']}s")
                 
                 manifest_data.append({
                     'image_id': result['image_id'],
@@ -163,6 +163,9 @@ class DatasetOrchestrator:
                     'dropped_stars': result['dropped_stars'],
                     'false_stars': result['false_stars'],
                     'smear_px': result['smear_px'],
+                    'saturated_stars': result['saturated_stars'],
+                    'saturated_pixels': result['saturated_pixels'],
+                    'sensor_saturation_e': result['sensor_saturation_e'],
                     'anom_lens_on': self.cfg.get('anom_lens_distortion', False),
                     'anom_false_on': self.cfg.get('anom_false_stars', False),
                     'anom_drop_on': self.cfg.get('anom_drop_stars', False),
@@ -177,7 +180,12 @@ class DatasetOrchestrator:
         if manifest_data:
             df = pd.DataFrame(manifest_data).sort_values(by='image_id')
             if os.path.exists(self.manifest_path):
-                df.to_csv(self.manifest_path, mode='a', header=False, index=False)
+                # Preserve historical rows while migrating the manifest to the
+                # expanded saturation-telemetry schema.
+                existing_df = pd.read_csv(self.manifest_path)
+                pd.concat([existing_df, df], ignore_index=True, sort=False).to_csv(
+                    self.manifest_path, index=False
+                )
             else:
                 df.to_csv(self.manifest_path, index=False)
                 
