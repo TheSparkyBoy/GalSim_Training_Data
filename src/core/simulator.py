@@ -275,7 +275,7 @@ class TelescopeSimulator:
         # --- DIGITAL STAGE (Conversion to ADU) ---
         
         # 5. Convert Electrons to ADU using System Gain
-        self.image /= system_gain
+        self.image /= self.system_gain
         
         # 6. Add the electronic Bias Pedestal (Applied in ADU by the hardware)
         self.image += bias_pedestal

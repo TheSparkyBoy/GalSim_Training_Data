@@ -6,7 +6,7 @@ DATASET_CONFIG = {
     'total_images': 10,          
     
     # --- Telescope & Sensor Hardware ---
-    'exposure_time': 0.5,        # seconds
+    'exposure_time': 50,        # seconds
     'focal_length_mm': 416.0,    # millimeters
     'aperture_mm': 65.0,         # millimeters
     'pixel_size_um': 2.9,        # micrometers
@@ -31,15 +31,15 @@ DATASET_CONFIG = {
     'sky_background_rate': 25.0,     # Light pollution flux (e-/pixel/second)
     
     # --- Anomaly Toggles ---
-    'anom_lens_distortion': False,
-    'anom_false_stars': False,
-    'anom_drop_stars': False,
-    'anom_pos_variation': False,
-    'anom_mag_variation': False,
-    'anom_motion_smear': False,
-    'anom_defocus': False,
-    'anom_dead_pixels': False,
-    'anom_hot_pixels': False,
+    'anom_lens_distortion': True,
+    'anom_false_stars': True,
+    'anom_drop_stars': True,
+    'anom_pos_variation': True,
+    'anom_mag_variation': True,
+    'anom_motion_smear': True,
+    'anom_defocus': True,
+    'anom_dead_pixels': True,
+    'anom_hot_pixels': True,
     
     # Specific catalog to pull from your cache directory
     'cache_filename': "GAIADR3_master_star_cache_12.csv",
