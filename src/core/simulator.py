@@ -241,34 +241,72 @@ class TelescopeSimulator:
                 self.stars_drawn += 1
 
     def apply_sensor_noise(self):
-        self.image += 1500.0 
+        # 1. Define Input Variables
+        full_well_e = self.cfg.get('full_well_capacity_e', 40000.0)      # Physical well limit
+        system_gain = self.cfg.get('system_gain', 1.0)                   # Conversion (e-/ADU)
+        bias_pedestal = self.cfg.get('bias_pedestal', 500.0)             # Electronic offset (ADU)
+        dark_current_rate = self.cfg.get('dark_current_rate', 0.002)     # Thermal leak (e-/pixel/s)
+        sky_background_rate = self.cfg.get('sky_background_rate', 25.0)  # Light pollution (e-/pixel/s)
+        t_exp = self.cfg['exposure_time']                                # Exposure time (s)
+        
+        # --- ANALOG STAGE (Measurements in Electrons) ---
+        
+        # 2. Add thermal & sky background electrons (Signal electrons were already added by draw_stars)
+        background_electrons = (dark_current_rate + sky_background_rate) * t_exp
+        self.image += background_electrons 
+        
+        # 3. Apply Quantum (Poisson) and Amplifier (Gaussian) Noise
         rng = galsim.BaseDeviate(int(self.image_id))
         self.image.addNoise(galsim.PoissonNoise(rng))
-        self.image.addNoise(galsim.GaussianNoise(rng, sigma=0.7))
         
-        # --- THERMAL ADC SATURATION (Hot Pixels) ---
+        read_noise_e = self.cfg.get('read_noise', 0.7)
+        self.image.addNoise(galsim.GaussianNoise(rng, sigma=read_noise_e))
+        
+        # 4. Apply Physical Full Well Capacity Limit
+        # Any pixel with more than 40,000 electrons physically bleeds/clips before hitting the ADC
+        self.image.array[self.image.array > full_well_e] = full_well_e
+        
+        # --- DIGITAL STAGE (Conversion to ADU) ---
+        
+        # 5. Convert Electrons to ADU using System Gain
+        self.image /= system_gain
+        
+        # 6. Add the electronic Bias Pedestal (Applied in ADU by the hardware)
+        self.image += bias_pedestal
+        
+        # 7. Apply Defective Sensor Anomalies (In ADU)
         if self.anom_hot_pix:
             N_bits = 12                                    
             ADU_max = (2 ** N_bits) - 1
-            
             num_hot = np.random.poisson(200) 
             hx = np.random.randint(0, self.cfg['image_size_x'], num_hot)
             hy = np.random.randint(0, self.cfg['image_size_y'], num_hot)
             self.image.array[hy, hx] = float(ADU_max)
             
-        # --- SENSOR DEFECTS (Dead Pixels) ---
         if self.anom_dead_pix:
-            ADU_raw = 0.0                                  
-            ADU_bias = 0.0                                 
-            ADU_calibrated = ADU_raw - ADU_bias
-            
             num_dead = np.random.poisson(200) 
             dx = np.random.randint(0, self.cfg['image_size_x'], num_dead)
             dy = np.random.randint(0, self.cfg['image_size_y'], num_dead)
-            self.image.array[dy, dx] = ADU_calibrated
+            self.image.array[dy, dx] = 0.0
             
+        # 8. ADC Quantization & Hard-Clipping to 12-bit limit
         self.image.quantize()
-        self.image.array[self.image.array > 4095] = 4095
+        self.image.array[self.image.array > 4095.0] = 4095.0
+        
+        # Failsafe: Ensure no mathematical negative values exist after noise fluctuation
+        self.image.array[self.image.array < 0.0] = 0.0
+
+    def measure_global_background(self):
+        # Extract background statistics from the final ADU image
+        bg_mean_adu, bg_median_adu, bg_std_adu = sigma_clipped_stats(self.image.array, sigma=3.0, maxiters=5)
+        
+        # Fetch the dynamic gain from config to calculate the true electron background
+        gain_e_per_adu = self.cfg.get('system_gain', 1.0) 
+        
+        return {
+            'mean_adu': round(bg_mean_adu, 2), 'std_adu': round(bg_std_adu, 2),
+            'mean_e': round(bg_mean_adu * gain_e_per_adu, 2), 'std_e': round(bg_std_adu * gain_e_per_adu, 2)
+        }
 
     def measure_snr(self, x, y):
         ix, iy = int(round(x)), int(round(y))
@@ -281,58 +319,68 @@ class TelescopeSimulator:
         y_min = max(0, iy - 1)
         y_max = min(self.cfg['image_size_y'], iy + 2)
         
-        cutout = self.image.array[y_min:y_max, x_min:x_max]
-        n_pix = cutout.size
+        # 1. Extract the ADU cutout
+        cutout_adu = self.image.array[y_min:y_max, x_min:x_max]
+        n_pix = cutout_adu.size
         
-        bg_mean = self.bg_stats['mean_adu']
-        bg_std = max(1e-5, self.bg_stats['std_adu'])
+        # 2. Convert ADU back to Electrons for accurate Poisson math
+        gain = self.cfg.get('system_gain', 1.0)
+        cutout_e = cutout_adu * gain
         
-        net_signal = float(np.sum(cutout - bg_mean))
-        if net_signal <= 0:
+        # 3. Use the electron-based background statistics
+        bg_mean_e = self.bg_stats['mean_e']
+        bg_std_e = max(1e-5, self.bg_stats['std_e'])
+        
+        # 4. Calculate Net Signal and Noise in Electrons
+        net_signal_e = float(np.sum(cutout_e - bg_mean_e))
+        if net_signal_e <= 0:
             return 0.0
             
-        noise = float(np.sqrt(net_signal + (n_pix * (bg_std ** 2))))
+        noise_e = float(np.sqrt(net_signal_e + (n_pix * (bg_std_e ** 2))))
         
-        return float(round(net_signal / noise, 2))
+        return float(round(net_signal_e / noise_e, 2))
 
     def _evaluate_merline_howell_telemetry(self, img_array):
         if img_array is None:
             return 0, 0.0, 0.0, 0.0
         try:
-            img_float = img_array.astype(np.float32)
-            total_pixels = img_float.size
+            # --- CONVERT ENTIRE IMAGE BACK TO ELECTRONS FOR POISSON MATH ---
+            gain = self.cfg.get('system_gain', 1.0)
+            img_float_e = img_array.astype(np.float32) * gain
+            total_pixels = img_float_e.size
             
-            bg_mean = float(np.median(img_float))
-            mad = float(np.median(np.abs(img_float - bg_mean)))
-            bg_std = float(1.4826 * mad)
+            bg_mean_e = float(np.median(img_float_e))
+            mad_e = float(np.median(np.abs(img_float_e - bg_mean_e)))
+            bg_std_e = float(1.4826 * mad_e)
             
-            if bg_std == 0:
-                bg_std = float(np.std(img_float))
-                if bg_std == 0: bg_std = 1.0
+            if bg_std_e == 0:
+                bg_std_e = float(np.std(img_float_e))
+                if bg_std_e == 0: bg_std_e = 1.0
                 
-            bg_variance = bg_std ** 2
-            threshold = bg_mean + (5.0 * bg_std)
+            bg_variance_e = bg_std_e ** 2
+            threshold_e = bg_mean_e + (5.0 * bg_std_e)
             
             structure = np.ones((3, 3), dtype=int)
-            labeled_array, num_detected_stars = ndi.label(img_float > threshold, structure=structure)
+            labeled_array, num_detected_stars = ndi.label(img_float_e > threshold_e, structure=structure)
             
             if num_detected_stars > 0:
-                n_px = np.array(ndi.sum(np.ones_like(img_float), labeled_array, index=range(1, num_detected_stars + 1)))
-                net_signal_img = img_float - bg_mean
-                N_star = np.array(ndi.sum(net_signal_img, labeled_array, index=range(1, num_detected_stars + 1)))
+                n_px = np.array(ndi.sum(np.ones_like(img_float_e), labeled_array, index=range(1, num_detected_stars + 1)))
+                net_signal_img_e = img_float_e - bg_mean_e
+                N_star_e = np.array(ndi.sum(net_signal_img_e, labeled_array, index=range(1, num_detected_stars + 1)))
                 
                 total_star_pixels = np.sum(n_px)
                 n_B = max(1.0, float(total_pixels - total_star_pixels))
                 
-                bg_term = n_px * (1.0 + (n_px / n_B)) * bg_variance
-                radicand = np.maximum(1e-6, N_star + bg_term)
+                # Merline & Howell equation (Calculated entirely in electrons)
+                bg_term_e = n_px * (1.0 + (n_px / n_B)) * bg_variance_e
+                radicand_e = np.maximum(1e-6, N_star_e + bg_term_e)
                 
-                star_snrs = N_star / np.sqrt(radicand)
+                star_snrs = N_star_e / np.sqrt(radicand_e)
                 median_snr = float(np.median(star_snrs))
             else:
                 median_snr = 0.0
                 
-            return int(num_detected_stars), round(bg_mean, 2), round(bg_std, 2), round(median_snr, 2)
+            return int(num_detected_stars), round(bg_mean_e, 2), round(bg_std_e, 2), round(median_snr, 2)
         except Exception as e:
             print(f"[WARNING] Merline & Howell simulator evaluation failed: {e}")
             return 0, 0.0, 0.0, 0.0
@@ -385,14 +433,6 @@ class TelescopeSimulator:
                 final_snr, 1 
             ])
 
-    def measure_global_background(self):
-        bg_mean_adu, bg_median_adu, bg_std_adu = sigma_clipped_stats(self.image.array, sigma=3.0, maxiters=5)
-        gain_e_per_adu = 1.0 
-        return {
-            'mean_adu': round(bg_mean_adu, 2), 'std_adu': round(bg_std_adu, 2),
-            'mean_e': round(bg_mean_adu * gain_e_per_adu, 2), 'std_e': round(bg_std_adu * gain_e_per_adu, 2)
-        }
-
     def export_files(self):
         fits_path = os.path.join(self.cfg['dirs']['fits'], f'{self.image_id:07d}.fits')
         png_path = os.path.join(self.cfg['dirs']['png'], f'{self.image_id:07d}.png')
@@ -443,8 +483,8 @@ class TelescopeSimulator:
             'bg_mean_e': bg_mean,
             'bg_std_e': bg_std,
             'median_snr': med_snr,
-            'distorted_stars': getattr(self, 'distorted_count', 0),
-            'dropped_stars': getattr(self, 'dropped_count', 0),
-            'false_stars': getattr(self, 'false_count', 0),
-            'smear_px': getattr(self, 'smear_length', 0)
+            'distorted_stars': self.stars_drawn if self.anom_lens else 0, # All stars are distorted if lens anom is on
+            'dropped_stars': self.stars_dropped,                          
+            'false_stars': self.false_stars_injected,                     
+            'smear_px': round(self.smear_applied, 2)                      
         }
