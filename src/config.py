@@ -23,22 +23,23 @@ DATASET_CONFIG = {
 
     # --- Sensor & Background Noise Profile ---
     'full_well_capacity_e': 40000.0, # Physical max limit of the silicon well (electrons)
-    'system_gain': 9.77,             # Gain required to map 40k e- to a 12-bit 4095 ADU limit
+    'native_gain_e_adu': 9.77,       # Hardware conversion rate at Gain 0 (e-/ADU)
+    'nina_gain': 100,                # NINA/ASIStudio Gain slider value (0 to 252+)
     'bias_pedestal': 500.0,          # Fixed electrical offset (ADU)
     'read_noise': 0.7,               # Amplifier read noise (electrons)
     'dark_current_rate': 0.002,      # Thermal noise rate (e-/pixel/second)
-    'sky_background_rate': 25.0,     # Light pollution flux (e-/pixel/second).
+    'sky_background_rate': 25.0,     # Light pollution flux (e-/pixel/second)
     
     # --- Anomaly Toggles ---
-    'anom_lens_distortion': True,
-    'anom_false_stars': True,
-    'anom_drop_stars': True,
-    'anom_pos_variation': True,
-    'anom_mag_variation': True,
-    'anom_motion_smear': True,
-    'anom_defocus': True,
-    'anom_dead_pixels': True,
-    'anom_hot_pixels': True,
+    'anom_lens_distortion': False,
+    'anom_false_stars': False,
+    'anom_drop_stars': False,
+    'anom_pos_variation': False,
+    'anom_mag_variation': False,
+    'anom_motion_smear': False,
+    'anom_defocus': False,
+    'anom_dead_pixels': False,
+    'anom_hot_pixels': False,
     
     # Specific catalog to pull from your cache directory
     'cache_filename': "GAIADR3_master_star_cache_12.csv",

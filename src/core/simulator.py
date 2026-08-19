@@ -33,6 +33,13 @@ class TelescopeSimulator:
         self.wcs = None
         self.pixel_scale = None
         self.stars_drawn = 0
+
+        # --- NINA GAIN CONVERSION MATH ---
+        # 1 NINA gain unit = 0.1 dB. The linear multiplier is 10^(dB/20), which simplifies to 10^(nina_gain/200)
+        self.nina_gain = self.cfg.get('nina_gain', 0)
+        self.native_gain = self.cfg.get('native_gain_e_adu', 9.77)
+        self.amp_multiplier = 10 ** (self.nina_gain / 200.0)
+        self.system_gain = self.native_gain / self.amp_multiplier
         
         # --- GRANULAR ANOMALY TOGGLES ---
         self.anom_lens = self.cfg.get('anom_lens_distortion', False)
@@ -243,7 +250,6 @@ class TelescopeSimulator:
     def apply_sensor_noise(self):
         # 1. Define Input Variables
         full_well_e = self.cfg.get('full_well_capacity_e', 40000.0)      # Physical well limit
-        system_gain = self.cfg.get('system_gain', 1.0)                   # Conversion (e-/ADU)
         bias_pedestal = self.cfg.get('bias_pedestal', 500.0)             # Electronic offset (ADU)
         dark_current_rate = self.cfg.get('dark_current_rate', 0.002)     # Thermal leak (e-/pixel/s)
         sky_background_rate = self.cfg.get('sky_background_rate', 25.0)  # Light pollution (e-/pixel/s)
