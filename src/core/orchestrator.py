@@ -8,7 +8,6 @@ import multiprocessing as mp
 from core.simulator import TelescopeSimulator
 import gc
 
-# [Keep init_worker and worker_bridge identical]
 global_master_table = None
 def init_worker(cache_file_path):
     global global_master_table
@@ -28,28 +27,31 @@ class DatasetOrchestrator:
         self.cfg = config
         self.base_dir = os.path.expanduser('~/GalSim_Training_Data')
         
-        fov = round(206.264806247096355 * (self.cfg['pixel_size_um'] / self.cfg['focal_length_mm']) * self.cfg['image_size_x'] / 3600.0, 2)
-        catalog_name = self.cfg['cache_filename'].replace('.csv', '')
-
-        # --- UPDATED: Dynamic Folder Naming Logic ---
-        any_anomalies = any([
-            self.cfg.get('anom_lens_distortion', False), 
-            self.cfg.get('anom_false_stars', False),
-            self.cfg.get('anom_drop_stars', False), 
-            self.cfg.get('anom_pos_variation', False),
-            self.cfg.get('anom_mag_variation', False), 
-            self.cfg.get('anom_motion_smear', False),
-            self.cfg.get('anom_defocus', False),
-            self.cfg.get('anom_dead_pixels', False),
-            self.cfg.get('anom_hot_pixels', False)
-        ])
-        anom_status = "mixed_anomalies" if any_anomalies else "perfect_optics"
-        
-        self.dataset_name = (f"{self.cfg['mode']}{catalog_name}_seed_{self.cfg['global_seed']}_"
-                             f"fov_{fov}_x_{self.cfg['image_size_x']}_y_{self.cfg['image_size_y']}_"
-                             f"pxlsz_{self.cfg['pixel_size_um']}um_{self.cfg['focal_length_mm']}mm_"
-                             f"{self.cfg['exposure_time']}s_roll{self.cfg['roll']}deg_{anom_status}"
-                             f"{self.cfg.get('additional comments', '')}")
+        # Use explicit dataset_name if provided; otherwise generate from parameters
+        if self.cfg.get('dataset_name'):
+            self.dataset_name = self.cfg['dataset_name']
+        else:
+            fov = round(206.264806247096355 * (self.cfg['pixel_size_um'] / self.cfg['focal_length_mm']) * self.cfg['image_size_x'] / 3600.0, 2)
+            catalog_name = self.cfg.get('cache_filename', 'GAIADR3_master_star_cache_12.csv').replace('.csv', '')
+            any_anomalies = any([
+                self.cfg.get('anom_lens_distortion', False), 
+                self.cfg.get('anom_false_stars', False),
+                self.cfg.get('anom_drop_stars', False), 
+                self.cfg.get('anom_pos_variation', False),
+                self.cfg.get('anom_mag_variation', False), 
+                self.cfg.get('anom_motion_smear', False),
+                self.cfg.get('anom_defocus', False),
+                self.cfg.get('anom_dead_pixels', False),
+                self.cfg.get('anom_hot_pixels', False)
+            ])
+            anom_status = "mixed_anomalies" if any_anomalies else "perfect_optics"
+            mode = self.cfg.get('mode', '')
+            roll = self.cfg.get('roll', self.cfg.get('roll_fixed', 0.0))
+            self.dataset_name = (f"{mode}{catalog_name}_seed_{self.cfg['global_seed']}_"
+                                 f"fov_{fov}_x_{self.cfg['image_size_x']}_y_{self.cfg['image_size_y']}_"
+                                 f"pxlsz_{self.cfg['pixel_size_um']}um_{self.cfg['focal_length_mm']}mm_"
+                                 f"{self.cfg['exposure_time']}s_roll{roll}deg_{anom_status}"
+                                 f"{self.cfg.get('additional comments', '')}")
         
         self.dirs = {
             'fits': os.path.join(self.base_dir, 'training_data', self.dataset_name, 'fits'),
@@ -59,14 +61,14 @@ class DatasetOrchestrator:
         self.manifest_path = os.path.join(self.base_dir, 'training_data', 'dataset_manifest.csv')
         self.master_table = None
 
-    # [Keep setup_directories, load_cache, get_starting_id, _get_random_sky_coord, _task_generator identical]
     def setup_directories(self):
         for path in self.dirs.values():
             os.makedirs(path, exist_ok=True)
 
     def load_cache(self):
         print("Loading Master Star Catalog from local solid-state drive...")
-        cache_file = os.path.join(self.base_dir, "master_star_caches", self.cfg['cache_filename'])
+        cache_filename = self.cfg.get('cache_filename', 'GAIADR3_master_star_cache_12.csv')
+        cache_file = os.path.join(self.base_dir, "master_star_caches", cache_filename)
         if not os.path.exists(cache_file):
             raise FileNotFoundError(f"Cannot find {cache_file}. Run build_cache.py first!")
         self.master_table = pd.read_csv(cache_file, dtype={'source_id': str, 'star_id': str})
@@ -99,6 +101,8 @@ class DatasetOrchestrator:
 
         def create_task(img_id, ra, dec):
             task = self.cfg.copy()
+            if 'roll' not in task:
+                task['roll'] = task.get('roll_fixed', 0.0)
             task.update({
                 'image_id': img_id,
                 'ra': ra,
@@ -132,7 +136,8 @@ class DatasetOrchestrator:
         manifest_data = [] 
         total_processed = 0
         
-        cache_file_path = os.path.join(self.base_dir, "master_star_caches", self.cfg['cache_filename'])
+        cache_filename = self.cfg.get('cache_filename', 'GAIADR3_master_star_cache_12.csv')
+        cache_file_path = os.path.join(self.base_dir, "master_star_caches", cache_filename)
 
         with mp.Pool(processes=num_cores, 
                      maxtasksperchild=50, 
@@ -143,19 +148,20 @@ class DatasetOrchestrator:
             for result in pool.imap_unordered(worker_bridge, task_stream, chunksize=1):
                 total_processed += 1
                 
-                print(f"Image {result['image_id']} | FOV: {result['fov_x_deg']}x{result['fov_y_deg']}° | Roll: {result['roll']:6.2f} | Stars: {result['stars_drawn']:4d} | Med. SNR: {result['median_snr']} | Time: {result['time_s']}s")
+                print(f"Image {result['image_id']} | FOV: {result['fov_x_deg']}x{result['fov_y_deg']}° | Stars: {result['stars_drawn']:4d} | Sat: {result['saturated_stars']:2d} | Med. SNR: {result['median_snr']} | Time: {result['time_s']}s")
                 
                 manifest_data.append({
                     'image_id': result['image_id'],
                     'dataset_group': self.dataset_name,
                     'ra': result['ra'],
                     'dec': result['dec'],
-                    'fov_x_deg': result['fov_x_deg'], # Added to manifest
-                    'fov_y_deg': result['fov_y_deg'], # Added to manifest
+                    'fov_x_deg': result['fov_x_deg'],
+                    'fov_y_deg': result['fov_y_deg'],
                     'camera_roll': result['roll'],
                     'focal_length_mm': self.cfg['focal_length_mm'],
                     'exposure_time_s': self.cfg['exposure_time'],
                     'total_stars': result['stars_drawn'],
+                    'saturated_stars': result['saturated_stars'],
                     'median_image_snr': result['median_snr'],
                     'bg_mean_e': result['bg_mean_e'],
                     'bg_std_e': result['bg_std_e'],
