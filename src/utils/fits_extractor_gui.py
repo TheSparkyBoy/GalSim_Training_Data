@@ -399,7 +399,7 @@ class AstapFUSExtractor(QMainWindow):
             bg_std = float(np.std(img_float)) or 1.0
             
         bg_variance = bg_std ** 2
-        threshold = bg_mean + (5.0 * bg_std)
+        threshold = bg_mean + (12.0 * bg_std)
         
         structure = np.ones((3, 3), dtype=int)
         labeled_array, num_stars = ndi.label(img_float > threshold, structure=structure)
