@@ -112,11 +112,12 @@ class DatasetOrchestrator:
             return task
 
         count = 0
-        for t_ra, t_dec in well_known_targets:
-            if count >= self.cfg['total_images']: return
-            yield create_task(global_img_id, t_ra, t_dec)
-            global_img_id += 1
-            count += 1
+    # Comment out if don't want well known targets
+        # for t_ra, t_dec in well_known_targets:
+        #     if count >= self.cfg['total_images']: return
+        #     yield create_task(global_img_id, t_ra, t_dec)
+        #     global_img_id += 1
+        #     count += 1
 
         while count < self.cfg['total_images']:
             t_ra, t_dec = self._get_random_sky_coord()
