@@ -7,3 +7,4 @@ training_data/
 _pycache_/
 src/utils/dist/
 src/utils/build/
+Fits Extractor.spec
