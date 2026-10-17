@@ -174,7 +174,12 @@ class TelescopeSimulator:
                 
                 raw_id_str = str(getattr(row, 'source_id', getattr(row, 'star_id', '0'))).split('.')[0]
                 self.temp_star_coords.append({
-                    'id': raw_id_str, 'x': final_pos.x, 'y': final_pos.y, 'mag': round(mag, 3)
+                    'id': raw_id_str, 
+                    'x': final_pos.x, 
+                    'y': final_pos.y, 
+                    'mag': round(mag, 3),
+                    'ra': float(row.RA_ICRS),   # Directly from master catalog
+                    'dec': float(row.DE_ICRS)  # Directly from master catalog
                 })
                 self.stars_drawn += 1
 
@@ -341,7 +346,7 @@ class TelescopeSimulator:
             self.label_data.append([
                 star['id'], round(star['x'], 2), round(star['y'], 2), 
                 star['mag'], self.cfg['focal_length_mm'], self.cfg['exposure_time'], 
-                final_snr, 0 
+                final_snr, 0, round(star['ra'], 6), round(star['dec'], 6)
             ])
             
         # --- VALIDATION: EXPLICIT FALSE STAR INJECTION ---
@@ -369,7 +374,7 @@ class TelescopeSimulator:
             self.label_data.append([
                 star['id'], round(star['x'], 2), round(star['y'], 2), 
                 star['mag'], self.cfg['focal_length_mm'], self.cfg['exposure_time'], 
-                final_snr, 1 
+                final_snr, 1, round(star['ra'], 6), round(star['dec'], 6)
             ])
 
     def export_files(self):
@@ -381,7 +386,7 @@ class TelescopeSimulator:
         
         with open(csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time', 'snr', 'is_artifact'])
+            writer.writerow(['star_id', 'x_image', 'y_image', 'flux_mag', 'focal_length', 'exposure_time', 'snr', 'is_artifact', 'ra', 'dec'])
             writer.writerows(self.label_data)
             
         fig = plt.figure(dpi=300, figsize=(16, 9), facecolor='black')
