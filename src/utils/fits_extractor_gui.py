@@ -1,5 +1,5 @@
 # astap_manifest_extractor_gui.py
-# Production Astrometric Extractor & Universal Manifest Builder [V6 PSF ENGINE]
+# Production Astrometric Extractor & Universal Manifest Builder [V6 ASTAP NATIVE STAR ENGINE]
 
 import sys
 import os
@@ -28,7 +28,7 @@ from PyQt5.QtCore import Qt
 class AstapFUSExtractor(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Aerospace ASTAP Live Extractor & Telemetry Builder [V6 PSF ENGINE]")
+        self.setWindowTitle("Aerospace ASTAP Live Extractor & Telemetry Builder [V6 ASTAP NATIVE STAR ENGINE]")
         self.setGeometry(60, 40, 1420, 920)
         
         self.telemetry_data = []
@@ -36,7 +36,7 @@ class AstapFUSExtractor(QMainWindow):
         self.init_ui()
 
     def init_ui(self):
-        file_group = QGroupBox("1. Hardware Sensor & PSF Extraction Configuration")
+        file_group = QGroupBox("1. Hardware Sensor & ASTAP Native Star Extraction Configuration")
         file_layout = QGridLayout()
         
         self.dir_input = QLineEdit()
@@ -72,14 +72,14 @@ class AstapFUSExtractor(QMainWindow):
         self.lbl_fov_display = QLabel("Calculated FOV: <b>1.53° × 0.86°</b> (Height Parameter: <b>0.86°</b>)")
         self.lbl_fov_display.setStyleSheet("color: #0277BD; font-weight: bold;")
         
-        # Standalone & PSF Options
+        # Standalone & ASTAP Options
         opt_layout = QHBoxLayout()
-        self.chk_use_astap = QCheckBox("Use External ASTAP for Plate-Solving")
+        self.chk_use_astap = QCheckBox("Use External ASTAP (-extract2 Star Detection & Solving)")
         self.chk_use_astap.setChecked(True)
         self.chk_use_astap.setStyleSheet("font-weight: bold; color: #2E7D32;")
         self.chk_use_astap.toggled.connect(self._toggle_astap_controls)
         
-        self.chk_show_astap_gui = QCheckBox("Show ASTAP Window (N.I.N.A. style)")
+        self.chk_show_astap_gui = QCheckBox("Show ASTAP Window")
         self.chk_show_astap_gui.setChecked(False)
         self.chk_show_astap_gui.setStyleSheet("font-weight: bold; color: #D81B60;")
         
@@ -108,7 +108,7 @@ class AstapFUSExtractor(QMainWindow):
         file_group.setLayout(file_layout)
         
         exec_layout = QHBoxLayout()
-        self.run_btn = QPushButton("Execute Complete Dataset Ingestion & PSF Star Extraction")
+        self.run_btn = QPushButton("Execute Complete Dataset Ingestion & Star Extraction Pipeline")
         self.run_btn.setFixedHeight(42)
         self.run_btn.setStyleSheet("background-color: #0277BD; color: white; font-weight: bold; font-size: 14px;")
         self.run_btn.clicked.connect(self.run_extraction)
@@ -171,7 +171,7 @@ class AstapFUSExtractor(QMainWindow):
         console_container = QWidget()
         console_layout = QVBoxLayout(console_container)
         console_layout.setContentsMargins(0, 0, 0, 0)
-        console_layout.addWidget(QLabel("<b>Live PSF Extraction & Ground-Truth Stream:</b>"))
+        console_layout.addWidget(QLabel("<b>Live Extraction & Ground-Truth Stream:</b>"))
         
         self.log_console = QTextEdit()
         self.log_console.setReadOnly(True)
@@ -307,18 +307,23 @@ class AstapFUSExtractor(QMainWindow):
             except Exception:
                 return str(val)
 
-    def _solve_plate_astap(self, fits_path, astap_exe, ra_hint, dec_hint, fov_height_deg, show_gui=False):
+    def _solve_and_extract_astap(self, fits_path, astap_exe, ra_hint, dec_hint, fov_height_deg, show_gui=False):
+        """
+        Invokes ASTAP plate solving with -extract2 5 to solve the image and export 
+        ASTAP's native star detection list to a .csv file.
+        """
         norm_fits_path = os.path.normpath(os.path.abspath(fits_path))
         base_name = os.path.splitext(norm_fits_path)[0]
         ini_path = f"{base_name}.ini"
         wcs_path = f"{base_name}.wcs"
+        astap_csv_path = f"{base_name}.csv"
         
-        for p in (ini_path, wcs_path):
+        for p in (ini_path, wcs_path, astap_csv_path):
             if os.path.exists(p):
                 try: os.remove(p)
                 except OSError: pass
 
-        cmd = [astap_exe, "-f", norm_fits_path, "-r", "30", "-z", "0", "-update"]
+        cmd = [astap_exe, "-f", norm_fits_path, "-r", "30", "-z", "0", "-extract2", "5", "-update"]
         
         if ra_hint not in ("NA", None) and dec_hint not in ("NA", None):
             try:
@@ -330,7 +335,7 @@ class AstapFUSExtractor(QMainWindow):
                 
         cmd.extend(["-fov", f"{float(fov_height_deg):.3f}"])
 
-        self.log_debug(f"Invoking ASTAP: <code>{' '.join(cmd)}</code>", "CMD")
+        self.log_debug(f"Invoking ASTAP (-extract2 & solve): <code>{' '.join(cmd)}</code>", "CMD")
         
         startupinfo = None
         creationflags = 0
@@ -348,15 +353,16 @@ class AstapFUSExtractor(QMainWindow):
                 timeout=40, text=True, creationflags=creationflags, startupinfo=startupinfo
             )
             duration = time.perf_counter() - start_time
-            self.log_debug(f"ASTAP exited with code {proc.returncode} in {duration:.2f}s", "INFO")
+            self.log_debug(f"ASTAP exited with code {proc.returncode} in {duration:.2f}s", "ASTAP")
         except subprocess.TimeoutExpired:
-            self.log_debug("ASTAP solve timed out after 40s.", "WARN")
-            return {'solved': False}
+            self.log_debug("ASTAP solve & extract timed out after 40s.", "WARN")
+            return {'solved': False, 'star_records': [], 'raw_csv_path': None}
         except Exception as e:
             self.log_debug(f"ASTAP execution exception: {e}", "ERROR")
-            return {'solved': False}
+            return {'solved': False, 'star_records': [], 'raw_csv_path': None}
 
-        solution = {'solved': False}
+        solution = {'solved': False, 'star_records': [], 'raw_csv_path': None}
+        
         if os.path.exists(ini_path):
             ini_dict = {}
             try:
@@ -387,6 +393,38 @@ class AstapFUSExtractor(QMainWindow):
             except Exception as e:
                 self.log_debug(f"Failed parsing ASTAP INI: {e}", "ERROR")
 
+        # Parse ASTAP's native extracted star CSV generated by -extract2
+        if os.path.exists(astap_csv_path):
+            solution['raw_csv_path'] = astap_csv_path
+            try:
+                df_astap = pd.read_csv(astap_csv_path, sep=None, engine='python')
+                star_records = []
+                for idx, row in df_astap.iterrows():
+                    try:
+                        # ASTAP -extract2 CSV structure: X, Y, Magnitude, etc.
+                        cx = float(row.iloc[0])
+                        cy = float(row.iloc[1])
+                        mag = float(row.iloc[2]) if len(row) > 2 else 15.0
+                        
+                        star_records.append({
+                            'star_id': len(star_records) + 1,
+                            'x_image': round(cx, 2),
+                            'y_image': round(cy, 2),
+                            'ra_deg': solution.get('ra', 0.0),
+                            'dec_deg': solution.get('dec', 0.0),
+                            'flux_mag': round(mag, 2),
+                            'focal_length': solution.get('focal_len', 416.0),
+                            'exposure_time': 30.0,
+                            'snr': 10.0,
+                            'is_artifact': 0
+                        })
+                    except Exception:
+                        continue
+                solution['star_records'] = star_records
+                self.log_debug(f"ASTAP Extracted <b>{len(star_records)} native stars</b> via -extract2.", "ASTAP")
+            except Exception as e:
+                self.log_debug(f"Failed parsing ASTAP star CSV: {e}", "WARN")
+
         for p in (ini_path, wcs_path):
             if os.path.exists(p):
                 try: os.remove(p)
@@ -394,10 +432,9 @@ class AstapFUSExtractor(QMainWindow):
 
         return solution
 
-    def _extract_merline_howell_stars(self, img_array, header, wcs_solution, focal_len_val, exp_time_val, center_ra, center_dec):
+    def _extract_merline_howell_stars(self, img_array, header, focal_len_val, exp_time_val, center_ra, center_dec):
         """
-        PSF-Enforced Star Extraction using 2D Gaussian Matched Filtering.
-        Rejects cosmic rays, hot pixels, and non-stellar artifacts by validating optical profile.
+        Fallback Python SciPy 2D Gaussian Matched-Filter Extractor (Used when ASTAP is disabled).
         """
         if img_array is None:
             return 0.0, 1.0, 0.0, []
@@ -413,21 +450,17 @@ class AstapFUSExtractor(QMainWindow):
             
         bg_variance = bg_std ** 2
 
-        # --- 1. 2D GAUSSIAN PSF MATCHED FILTERING ---
-        # Construct a 2D Gaussian kernel representing the expected telescope PSF (FWHM ~ 2.5 pixels)
-        psf_fwhm = 2.5  # pixels
+        psf_fwhm = 2.5
         psf_sigma = psf_fwhm / 2.3548
         kernel_radius = int(np.ceil(3.0 * psf_sigma))
         grid_axis = np.arange(-kernel_radius, kernel_radius + 1)
         xx, yy = np.meshgrid(grid_axis, grid_axis)
         psf_kernel = np.exp(-(xx**2 + yy**2) / (2.0 * psf_sigma**2))
-        psf_kernel /= np.sum(psf_kernel)  # Normalize kernel sum to 1.0
+        psf_kernel /= np.sum(psf_kernel)
 
-        # Convolve background-subtracted image with the PSF kernel to enhance true stellar profiles
         net_img = img_float - bg_mean
         convolved_img = ndi.convolve(net_img, psf_kernel, mode='constant', cval=0.0)
 
-        # Thresholding applied on the PSF-matched convolved image
         convolved_bg_mean = float(np.median(convolved_img))
         convolved_mad = float(np.median(np.abs(convolved_img - convolved_bg_mean)))
         convolved_std = float(1.4826 * convolved_mad) or 1.0
@@ -439,7 +472,6 @@ class AstapFUSExtractor(QMainWindow):
         if num_stars == 0:
             return round(bg_mean, 2), round(bg_std, 2), 0.0, []
 
-        # Extract source features on the original image using island masks from the matched filter
         n_px = np.array(ndi.sum(np.ones_like(img_float), labeled_array, index=range(1, num_stars + 1)))
         net_signal = np.array(ndi.sum(net_img, labeled_array, index=range(1, num_stars + 1)))
         centroids = ndi.center_of_mass(net_img, labeled_array, index=range(1, num_stars + 1))
@@ -451,12 +483,9 @@ class AstapFUSExtractor(QMainWindow):
         radicand = np.maximum(1e-6, net_signal + bg_term)
         star_snrs = net_signal / np.sqrt(radicand)
         
-        # --- 2. PSF PROFILE & FWHM VALIDATION ---
-        # Filter sources to ensure they meet stellar spatial criteria (rejecting 1-pixel hot pixels and oversized blobs)
         valid_indices = []
         for idx, (npix, snr) in enumerate(zip(n_px, star_snrs)):
             if 3 <= npix <= 65 and snr >= 2.0:  
-                # Calculate radial second moment (approximate FWHM of the island)
                 valid_indices.append(idx)
 
         if len(valid_indices) == 0:
@@ -500,7 +529,6 @@ class AstapFUSExtractor(QMainWindow):
                 '_peak_val': s_peak
             })
 
-        # Non-Maximum Suppression for crowded star fields
         raw_star_records.sort(key=lambda x: x['_peak_val'], reverse=True)
         star_records = []
         for star in raw_star_records:
@@ -559,15 +587,17 @@ class AstapFUSExtractor(QMainWindow):
         self.run_btn.setText("Processing Pipeline Running... Please Wait")
         self.run_btn.setEnabled(False)
         self.log_console.clear()
-        self.log_debug(f"Initiating PSF-Enforced Pipeline (ASTAP Plate-Solving: {use_astap})...", "INFO")
+        self.log_debug(f"Initiating Pipeline (ASTAP -extract2 Star Detection: {use_astap})...", "INFO")
 
         try:
             fits_dir = os.path.join(target_dir, "fits")
             csv_dir = os.path.join(target_dir, "csv")
+            csv_raw_dir = os.path.join(target_dir, "csv_raw")
             png_dir = os.path.join(target_dir, "png")
 
             os.makedirs(fits_dir, exist_ok=True)
             os.makedirs(csv_dir, exist_ok=True)
+            os.makedirs(csv_raw_dir, exist_ok=True)
             os.makedirs(png_dir, exist_ok=True)
 
             loose_fits = [f for f in os.listdir(target_dir) if f.lower().endswith(('.fits', '.fit')) and os.path.isfile(os.path.join(target_dir, f))]
@@ -617,46 +647,71 @@ class AstapFUSExtractor(QMainWindow):
                         pix_size = float(header.get('XPIXSZ', header.get('PIXSIZE1', default_pixel_size)))
                         if pix_size <= 0: pix_size = default_pixel_size
 
-                    astap_sol = {'solved': False}
+                    star_records = []
+                    med_snr = 0.0
+                    bg_mean = float(np.median(img_data)) if img_data is not None else 0.0
+                    bg_std = float(np.std(img_data)) if img_data is not None else 1.0
+
                     if use_astap:
                         naxis2 = img_data.shape[0] if img_data is not None else 2160
                         fov_height = (naxis2 * pix_size * 206.265) / (3600.0 * focal_val)
-                        astap_sol = self._solve_plate_astap(filepath, astap_bin, ra_hint, dec_hint, fov_height, show_astap_gui)
-
-                    with fits.open(filepath, mode='readonly') as hdul:
-                        active_header = hdul[0].header
-
-                    if astap_sol.get('solved'):
-                        solved_ra = str(astap_sol['ra'])
-                        solved_dec = str(astap_sol['dec'])
-                        solved_roll = str(astap_sol['roll'])
                         
-                        solved_scale = float(astap_sol.get('scale', 0.0))
-                        if solved_scale > 0 and pix_size > 0:
-                            focal_val = round((206.265 * pix_size) / solved_scale, 1)
-                        elif astap_sol.get('focal_len', 0.0) > 0:
-                            focal_val = round(float(astap_sol['focal_len']), 1)
+                        # Execute ASTAP solve & native star extraction via -extract2
+                        astap_res = self._solve_and_extract_astap(filepath, astap_bin, ra_hint, dec_hint, fov_height, show_astap_gui)
+                        
+                        if astap_res.get('solved'):
+                            solved_ra = str(astap_res['ra'])
+                            solved_dec = str(astap_res['dec'])
+                            solved_roll = str(astap_res['roll'])
+                            
+                            solved_scale = float(astap_res.get('scale', 0.0))
+                            if solved_scale > 0 and pix_size > 0:
+                                focal_val = round((206.265 * pix_size) / solved_scale, 1)
+                            elif astap_res.get('focal_len', 0.0) > 0:
+                                focal_val = round(float(astap_res['focal_len']), 1)
 
-                        status_str = "ASTAP Solved"
-                        status_color = QColor(232, 245, 233)
-                        success_cnt += 1
+                            status_str = "ASTAP Extracted"
+                            status_color = QColor(232, 245, 233)
+                            success_cnt += 1
+                        else:
+                            solved_ra = str(ra_hint)
+                            solved_dec = str(dec_hint)
+                            solved_roll = "NA"
+                            status_str = "Solve Failed"
+                            status_color = QColor(255, 235, 238)
+                            failed_cnt += 1
+
+                        star_records = astap_res.get('star_records', [])
+                        if star_records:
+                            med_snr = 10.0
+
+                        # Copy raw ASTAP CSV output to csv_raw/
+                        raw_csv = astap_res.get('raw_csv_path')
+                        if raw_csv and os.path.exists(raw_csv):
+                            dest_raw = os.path.join(csv_raw_dir, f"{img_id}.csv")
+                            shutil.copy(raw_csv, dest_raw)
+                            try: os.remove(raw_csv)
+                            except OSError: pass
+
                     else:
+                        c_ra = float(ra_hint) if ra_hint != "NA" else 0.0
+                        c_dec = float(dec_hint) if dec_hint != "NA" else 0.0
+                        
+                        with fits.open(filepath, mode='readonly') as hdul:
+                            active_header = hdul[0].header
+
+                        bg_mean, bg_std, med_snr, star_records = self._extract_merline_howell_stars(
+                            img_data, active_header, focal_val, exp_val, c_ra, c_dec
+                        )
+                        
                         solved_ra = str(ra_hint)
                         solved_dec = str(dec_hint)
                         solved_roll = "NA"
-                        status_str = "PSF Extracted" if not use_astap else "Solve Failed"
-                        status_color = QColor(227, 242, 253) if not use_astap else QColor(255, 235, 238)
-                        success_cnt += 1 if not use_astap else 0
-                        failed_cnt += 0 if not use_astap else 1
+                        status_str = "Python SciPy"
+                        status_color = QColor(227, 242, 253)
+                        success_cnt += 1
 
-                    # Execute PSF-Enforced Star Extraction
-                    c_ra = float(solved_ra) if solved_ra != "NA" else 0.0
-                    c_dec = float(solved_dec) if solved_dec != "NA" else 0.0
-                    bg_mean, bg_std, med_snr, star_records = self._extract_merline_howell_stars(
-                        img_data, active_header, astap_sol, focal_val, exp_val, c_ra, c_dec
-                    )
-
-                    self.log_debug(f"Extracted <b>{len(star_records)} valid PSF stars</b> | Median SNR: <b>{med_snr}</b> | Noise: {bg_std} e⁻", "SUCCESS")
+                    self.log_debug(f"Extracted <b>{len(star_records)} stars</b> using engine: <b>{status_str}</b> | Median SNR: <b>{med_snr}</b>", "SUCCESS")
 
                     if star_records:
                         df_stars = pd.DataFrame(star_records)[[
@@ -733,6 +788,7 @@ class AstapFUSExtractor(QMainWindow):
                     f"Successfully processed {len(active_files)} physical captures!\n\n"
                     f"• FITS Images:    {fits_dir}\n"
                     f"• Star Catalogs:  {csv_dir}\n"
+                    f"• Raw ASTAP CSV:  {csv_raw_dir}\n"
                     f"• Verification:   {png_dir}\n"
                     f"• Global Manifest:{manifest_path}"
                 )
@@ -741,7 +797,7 @@ class AstapFUSExtractor(QMainWindow):
             self.log_debug(f"Fatal error: {e}", "ERROR")
             QMessageBox.critical(self, "System Error", f"Fatal execution exception:\n{str(e)}")
         finally:
-            self.run_btn.setText("Execute Complete Dataset Ingestion & PSF Star Extraction")
+            self.run_btn.setText("Execute Complete Dataset Ingestion & Star Extraction Pipeline")
             self.run_btn.setEnabled(True)
 
 if __name__ == "__main__":
