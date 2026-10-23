@@ -485,7 +485,7 @@ class AstapFUSExtractor(QMainWindow):
         
         valid_indices = []
         for idx, (npix, snr) in enumerate(zip(n_px, star_snrs)):
-            if 3 <= npix <= 65 and snr >= 2.0:  
+            if 3 <= npix <= 300 and snr >= 2.0:  
                 valid_indices.append(idx)
 
         if len(valid_indices) == 0:
