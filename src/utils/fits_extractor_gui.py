@@ -498,13 +498,13 @@ class AstapFUSExtractor(QMainWindow):
                     try:
                         cx = float(row.iloc[0])
                         cy = float(row.iloc[1])
-                        mag = float(row.iloc[2]) if len(row) > 2 else 15.0
+                        s_flux = float(row.iloc[4]) if len(row) > 2 else 15.0
                         
                         star_records.append({
                             'star_id': str(len(star_records) + 1),
                             'x_image': round(cx, 2),
                             'y_image': round(cy, 2),
-                            'flux_mag': round(mag, 2),
+                            'flux_mag': round(20.0 - 2.5 * np.log10(s_flux), 2),
                             'focal_length': solution.get('focal_len', 416.0),
                             'exposure_time': 30.0,
                             'snr': 10.0,
