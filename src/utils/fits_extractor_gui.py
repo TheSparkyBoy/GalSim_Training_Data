@@ -1,5 +1,5 @@
 # fits_extractor_gui.py
-# Production Astrometric Extractor & Universal Manifest Builder [V6 ASTAP NATIVE STAR ENGINE]
+# Production Astrometric Extractor & Universal Manifest Builder [V6 ASTAP NATIVE STAR ENGINE + PERSISTENT STATE]
 
 import sys
 import os
@@ -12,7 +12,7 @@ import numpy as np
 import scipy.ndimage as ndi
 from astropy.io import fits
 from astropy.wcs import WCS
-from astropy.coordinates import Angle
+from astropy.coordinates import Angle, SkyCoord
 from astropy import units as u
 import cv2
 
@@ -23,28 +23,45 @@ from PyQt5.QtWidgets import (
     QStyleFactory, QCheckBox, QProgressBar, QTextEdit, QSplitter, QDoubleSpinBox
 )
 from PyQt5.QtGui import QColor, QFont, QTextCursor
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSettings
 
 class AstapFUSExtractor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Aerospace ASTAP Live Extractor & Telemetry Builder [V6 ASTAP NATIVE STAR ENGINE]")
-        self.setGeometry(60, 40, 1420, 920)
+        self.setGeometry(60, 40, 1420, 960)
+        self.settings = QSettings("Aerospace", "ASTAPExtractor")
         
         self.telemetry_data = []
         self.detected_database_name = "Scanning..."
         self.init_ui()
 
     def init_ui(self):
-        file_group = QGroupBox("1. Hardware Sensor & ASTAP Native Star Extraction Configuration")
+        file_group = QGroupBox("1. Hardware Sensor, ASTAP & Reference Catalog Configuration")
         file_layout = QGridLayout()
         
+        # Target Dataset Directory Input + Persistent State
         self.dir_input = QLineEdit()
         self.dir_input.setPlaceholderText("Select target dataset folder containing .fits captures...")
+        last_dir = self.settings.value("last_fits_dir", "")
+        if last_dir and os.path.exists(last_dir):
+            self.dir_input.setText(last_dir)
         dir_btn = QPushButton("Browse FITS Folder")
         dir_btn.clicked.connect(self.browse_directory)
         
-        default_astap = r"C:\Program Files\astap\astap.exe" if os.name == 'nt' else "/usr/bin/astap"
+        # Reference Catalog Input + Persistent State
+        self.cat_input = QLineEdit()
+        self.cat_input.setPlaceholderText("Select ground-truth reference catalog CSV (e.g. source_id, x_image, y_image, Gmag)...")
+        last_cat = self.settings.value("last_ref_catalog", "")
+        if last_cat and os.path.exists(last_cat):
+            self.cat_input.setText(last_cat)
+        cat_btn = QPushButton("Browse Catalog")
+        cat_btn.clicked.connect(self.browse_catalog)
+        
+        default_astap = self.settings.value("last_astap_path", "")
+        if not default_astap or not os.path.exists(default_astap):
+            default_astap = r"C:\Program Files\astap\astap.exe" if os.name == 'nt' else "/usr/bin/astap"
+
         self.astap_input = QLineEdit()
         self.astap_input.setText(default_astap)
         self.astap_input.textChanged.connect(self._refresh_database_detection)
@@ -57,14 +74,14 @@ class AstapFUSExtractor(QMainWindow):
         # Sensor & Optical Controls
         self.spin_pixel_size = QDoubleSpinBox()
         self.spin_pixel_size.setRange(0.5, 20.0)
-        self.spin_pixel_size.setValue(2.9)
+        self.spin_pixel_size.setValue(float(self.settings.value("last_pixel_size", 2.9)))
         self.spin_pixel_size.setSingleStep(0.1)
         self.spin_pixel_size.setSuffix(" µm")
         self.spin_pixel_size.valueChanged.connect(self._update_calculated_fov)
         
         self.spin_focal_len = QDoubleSpinBox()
         self.spin_focal_len.setRange(10.0, 5000.0)
-        self.spin_focal_len.setValue(416.0)
+        self.spin_focal_len.setValue(float(self.settings.value("last_focal_len", 416.0)))
         self.spin_focal_len.setSingleStep(10.0)
         self.spin_focal_len.setSuffix(" mm")
         self.spin_focal_len.valueChanged.connect(self._update_calculated_fov)
@@ -72,7 +89,6 @@ class AstapFUSExtractor(QMainWindow):
         self.lbl_fov_display = QLabel("Calculated FOV: <b>1.53° × 0.86°</b> (Height Parameter: <b>0.86°</b>)")
         self.lbl_fov_display.setStyleSheet("color: #0277BD; font-weight: bold;")
         
-        # Standalone & ASTAP Options
         opt_layout = QHBoxLayout()
         self.chk_use_astap = QCheckBox("Use External ASTAP (-extract2 Star Detection & Solving)")
         self.chk_use_astap.setChecked(True)
@@ -91,20 +107,24 @@ class AstapFUSExtractor(QMainWindow):
         file_layout.addWidget(self.dir_input, 0, 1, 1, 2)
         file_layout.addWidget(dir_btn, 0, 3)
         
-        file_layout.addWidget(QLabel("ASTAP Executable:"), 1, 0)
-        file_layout.addWidget(self.astap_input, 1, 1, 1, 2)
-        file_layout.addWidget(astap_btn, 1, 3)
+        file_layout.addWidget(QLabel("Reference Catalog CSV:"), 1, 0)
+        file_layout.addWidget(self.cat_input, 1, 1, 1, 2)
+        file_layout.addWidget(cat_btn, 1, 3)
         
-        file_layout.addWidget(QLabel("Manifest CSV Name:"), 2, 0)
-        file_layout.addWidget(self.out_input, 2, 1, 1, 3)
+        file_layout.addWidget(QLabel("ASTAP Executable:"), 2, 0)
+        file_layout.addWidget(self.astap_input, 2, 1, 1, 2)
+        file_layout.addWidget(astap_btn, 2, 3)
         
-        file_layout.addWidget(QLabel("Sensor Pixel Size:"), 3, 0)
-        file_layout.addWidget(self.spin_pixel_size, 3, 1)
-        file_layout.addWidget(QLabel("Preset Focal Length:"), 3, 2)
-        file_layout.addWidget(self.spin_focal_len, 3, 3)
+        file_layout.addWidget(QLabel("Manifest CSV Name:"), 3, 0)
+        file_layout.addWidget(self.out_input, 3, 1, 1, 3)
         
-        file_layout.addWidget(self.lbl_fov_display, 4, 0, 1, 4)
-        file_layout.addLayout(opt_layout, 5, 0, 1, 4)
+        file_layout.addWidget(QLabel("Sensor Pixel Size:"), 4, 0)
+        file_layout.addWidget(self.spin_pixel_size, 4, 1)
+        file_layout.addWidget(QLabel("Preset Focal Length:"), 4, 2)
+        file_layout.addWidget(self.spin_focal_len, 4, 3)
+        
+        file_layout.addWidget(self.lbl_fov_display, 5, 0, 1, 4)
+        file_layout.addLayout(opt_layout, 6, 0, 1, 4)
         file_group.setLayout(file_layout)
         
         exec_layout = QHBoxLayout()
@@ -112,7 +132,7 @@ class AstapFUSExtractor(QMainWindow):
         self.run_btn.setFixedHeight(42)
         self.run_btn.setStyleSheet("background-color: #0277BD; color: white; font-weight: bold; font-size: 14px;")
         self.run_btn.clicked.connect(self.run_extraction)
-        self.run_btn.setEnabled(False)
+        self.run_btn.setEnabled(bool(last_dir and os.path.exists(last_dir)))
         
         clear_log_btn = QPushButton("Clear Console")
         clear_log_btn.setFixedHeight(42)
@@ -218,6 +238,10 @@ class AstapFUSExtractor(QMainWindow):
         fov_w = round((3840 * pix_um * 206.265) / (3600.0 * focal_mm), 2)
         fov_h = round((2160 * pix_um * 206.265) / (3600.0 * focal_mm), 2)
         self.lbl_fov_display.setText(f"Estimated Sensor FOV: <b>{fov_w}° × {fov_h}°</b> (Height Parameter: <b>{fov_h}°</b>)")
+        
+        # Save spinbox states
+        self.settings.setValue("last_pixel_size", pix_um)
+        self.settings.setValue("last_focal_len", focal_mm)
 
     def _toggle_astap_controls(self, enabled):
         self.astap_input.setEnabled(enabled)
@@ -253,8 +277,9 @@ class AstapFUSExtractor(QMainWindow):
             return
 
         astap_dir = os.path.dirname(os.path.abspath(astap_bin))
-        known_catalogs = {'D80': ['d80'], 'D50': ['d50'], 'D20': ['d20'], 'H18': ['h18'], 'V50': ['v50']}
+        self.settings.setValue("last_astap_path", astap_bin)
         
+        known_catalogs = {'D80': ['d80'], 'D50': ['d50'], 'D20': ['d20'], 'H18': ['h18'], 'V50': ['v50']}
         found_dbs = []
         try:
             files_lower = [f.lower() for f in os.listdir(astap_dir)]
@@ -272,16 +297,28 @@ class AstapFUSExtractor(QMainWindow):
             self.lbl_database.setText(self._create_kpi_card("ASTAP Database", "NONE DETECTED", "#C62828").text())
 
     def browse_directory(self):
-        directory = QFileDialog.getExistingDirectory(self, "Select Target Dataset Directory", os.path.expanduser("~"))
+        last_dir = self.dir_input.text().strip() or self.settings.value("last_fits_dir", os.path.expanduser("~"))
+        directory = QFileDialog.getExistingDirectory(self, "Select Target Dataset Directory", last_dir)
         if directory:
             self.dir_input.setText(directory)
+            self.settings.setValue("last_fits_dir", directory)
             self._check_ready_state()
 
+    def browse_catalog(self):
+        last_cat = self.cat_input.text().strip() or self.settings.value("last_ref_catalog", os.path.expanduser("~"))
+        filename, _ = QFileDialog.getOpenFileName(self, "Select Reference Catalog CSV", last_cat, "CSV Files (*.csv)")
+        if filename:
+            self.cat_input.setText(filename)
+            self.settings.setValue("last_ref_catalog", filename)
+            self.log_debug(f"Loaded reference catalog path: <b>{filename}</b>", "SUCCESS")
+
     def browse_astap(self):
+        last_astap = self.astap_input.text().strip() or self.settings.value("last_astap_path", os.path.expanduser("~"))
         exe_filter = "Executables (*.exe)" if os.name == 'nt' else "Executables (*)"
-        filename, _ = QFileDialog.getOpenFileName(self, "Select ASTAP Executable", os.path.expanduser("~"), exe_filter)
+        filename, _ = QFileDialog.getOpenFileName(self, "Select ASTAP Executable", last_astap, exe_filter)
         if filename:
             self.astap_input.setText(filename)
+            self.settings.setValue("last_astap_path", filename)
             self._refresh_database_detection()
             self._check_ready_state()
 
@@ -306,6 +343,69 @@ class AstapFUSExtractor(QMainWindow):
                 return str(round(angle.deg, 6))
             except Exception:
                 return str(val)
+
+    def _calibrate_magnitudes_with_catalog(self, star_records, catalog_path, max_radius_px=3.0):
+        """
+        Calibrates extracted star records against explicit reference catalog using 
+        image pixel coordinates (x_image, y_image) and applies true catalog magnitudes.
+        """
+        if not star_records or not catalog_path or not os.path.exists(catalog_path):
+            return star_records
+
+        try:
+            df_cat = pd.read_csv(catalog_path)
+            col_map = {str(c).lower(): c for c in df_cat.columns}
+            
+            mag_col = next((col_map[c] for c in ['gmag', 'mag', 'g_mag', 'magnitude', 'flux_mag'] if c in col_map), None)
+            x_col = next((col_map[c] for c in ['x_image', 'x', 'xpos'] if c in col_map), None)
+            y_col = next((col_map[c] for c in ['y_image', 'y', 'ypos'] if c in col_map), None)
+            id_col = next((col_map[c] for c in ['source_id', 'star_id', 'id'] if c in col_map), None)
+
+            if not mag_col or not x_col or not y_col:
+                self.log_debug(f"Reference catalog columns not recognized for pixel matching. Found: {list(df_cat.columns)}", "WARN")
+                return star_records
+
+            cat_x = df_cat[x_col].values
+            cat_y = df_cat[y_col].values
+            cat_gmags = df_cat[mag_col].values
+            cat_ids = df_cat[id_col].values if id_col else None
+
+            delta_mags = []
+            matched_count = 0
+
+            for star in star_records:
+                sx, sy = star.get('x_image'), star.get('y_image')
+                if sx is None or sy is None:
+                    continue
+
+                distances = np.hypot(cat_x - sx, cat_y - sy)
+                min_idx = np.argmin(distances)
+
+                if distances[min_idx] <= max_radius_px:
+                    true_gmag = cat_gmags[min_idx]
+                    inst_mag = star['flux_mag']
+                    delta_mags.append(true_gmag - inst_mag)
+                    
+                    if cat_ids is not None:
+                        star['star_id'] = str(cat_ids[min_idx])
+                    matched_count += 1
+
+            if len(delta_mags) >= 1:
+                zp_offset = float(np.median(delta_mags))
+                for star in star_records:
+                    star['flux_mag'] = round(star['flux_mag'] + zp_offset, 3)
+                self.log_debug(
+                    f"Catalog Photometric Calibration (Pixel Match): Matched <b>{matched_count}/{len(star_records)} stars</b> | "
+                    f"ZP Offset: <b>{zp_offset:+.3f} mag</b>", 
+                    "SUCCESS"
+                )
+            else:
+                self.log_debug("Catalog calibration: 0 spatial pixel matches found between catalog and frame stars.", "WARN")
+
+        except Exception as e:
+            self.log_debug(f"Catalog calibration exception: {e}", "ERROR")
+
+        return star_records
 
     def _solve_and_extract_astap(self, fits_path, astap_exe, ra_hint, dec_hint, fov_height_deg, show_gui=False):
         norm_fits_path = os.path.normpath(os.path.abspath(fits_path))
@@ -560,6 +660,7 @@ class AstapFUSExtractor(QMainWindow):
 
     def run_extraction(self):
         target_dir = os.path.normpath(os.path.abspath(self.dir_input.text().strip()))
+        catalog_path = self.cat_input.text().strip()
         output_csv_name = self.out_input.text().strip()
         use_astap = self.chk_use_astap.isChecked()
         astap_bin = os.path.normpath(os.path.abspath(self.astap_input.text().strip())) if use_astap else ""
@@ -570,6 +671,10 @@ class AstapFUSExtractor(QMainWindow):
 
         if not os.path.exists(target_dir):
             QMessageBox.critical(self, "Directory Error", "Target dataset directory does not exist.")
+            return
+
+        if catalog_path and not os.path.exists(catalog_path):
+            QMessageBox.critical(self, "Catalog Error", f"Reference catalog file not found at:\n{catalog_path}")
             return
 
         if use_astap and not os.path.exists(astap_bin):
@@ -704,6 +809,10 @@ class AstapFUSExtractor(QMainWindow):
                     self.log_debug(f"Extracted <b>{len(star_records)} stars</b> using engine: <b>{status_str}</b> | Median SNR: <b>{med_snr}</b>", "SUCCESS")
 
                     if star_records:
+                        # Apply explicit reference catalog magnitude calibration if specified
+                        if catalog_path:
+                            star_records = self._calibrate_magnitudes_with_catalog(star_records, catalog_path)
+
                         df_stars = pd.DataFrame(star_records)[[
                             'star_id', 'x_image', 'y_image', 'flux_mag', 
                             'focal_length', 'exposure_time', 'snr', 'is_artifact', 'ra', 'dec'
