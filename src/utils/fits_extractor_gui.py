@@ -51,7 +51,7 @@ class AstapFUSExtractor(QMainWindow):
         
         # Reference Catalog Input + Persistent State
         self.cat_input = QLineEdit()
-        self.cat_input.setPlaceholderText("Select ground-truth reference catalog CSV (e.g. source_id, x_image, y_image, Gmag)...")
+        self.cat_input.setPlaceholderText("Select ground-truth reference catalog CSV (e.g. source_id, RA_ICRS, DE_ICRS, Gmag)...")
         last_cat = self.settings.value("last_ref_catalog", "")
         if last_cat and os.path.exists(last_cat):
             self.cat_input.setText(last_cat)
@@ -239,7 +239,6 @@ class AstapFUSExtractor(QMainWindow):
         fov_h = round((2160 * pix_um * 206.265) / (3600.0 * focal_mm), 2)
         self.lbl_fov_display.setText(f"Estimated Sensor FOV: <b>{fov_w}° × {fov_h}°</b> (Height Parameter: <b>{fov_h}°</b>)")
         
-        # Save spinbox states
         self.settings.setValue("last_pixel_size", pix_um)
         self.settings.setValue("last_focal_len", focal_mm)
 
@@ -344,10 +343,10 @@ class AstapFUSExtractor(QMainWindow):
             except Exception:
                 return str(val)
 
-    def _calibrate_magnitudes_with_catalog(self, star_records, catalog_path, max_radius_px=3.0):
+    def _calibrate_magnitudes_with_catalog(self, star_records, catalog_path, match_threshold=5.0):
         """
-        Calibrates extracted star records against explicit reference catalog using 
-        image pixel coordinates (x_image, y_image) and applies true catalog magnitudes.
+        Calibrates extracted star records against reference catalog using either 
+        pixel coordinates (x_image, y_image) or celestial coordinates (RA_ICRS, DE_ICRS).
         """
         if not star_records or not catalog_path or not os.path.exists(catalog_path):
             return star_records
@@ -357,50 +356,90 @@ class AstapFUSExtractor(QMainWindow):
             col_map = {str(c).lower(): c for c in df_cat.columns}
             
             mag_col = next((col_map[c] for c in ['gmag', 'mag', 'g_mag', 'magnitude', 'flux_mag'] if c in col_map), None)
+            id_col = next((col_map[c] for c in ['source_id', 'star_id', 'id'] if c in col_map), None)
+            
+            # Check for pixel coordinate columns (GalSim simulation format)
             x_col = next((col_map[c] for c in ['x_image', 'x', 'xpos'] if c in col_map), None)
             y_col = next((col_map[c] for c in ['y_image', 'y', 'ypos'] if c in col_map), None)
-            id_col = next((col_map[c] for c in ['source_id', 'star_id', 'id'] if c in col_map), None)
 
-            if not mag_col or not x_col or not y_col:
-                self.log_debug(f"Reference catalog columns not recognized for pixel matching. Found: {list(df_cat.columns)}", "WARN")
+            # Check for celestial coordinate columns (Gaia DR3 format)
+            ra_col = next((col_map[c] for c in ['ra_icrs', 'ra', 'raj2000'] if c in col_map), None)
+            dec_col = next((col_map[c] for c in ['de_icrs', 'dec', 'dej2000', 'dec_icrs'] if c in col_map), None)
+
+            if not mag_col:
+                self.log_debug(f"Reference catalog magnitude column not recognized. Found: {list(df_cat.columns)}", "WARN")
                 return star_records
 
-            cat_x = df_cat[x_col].values
-            cat_y = df_cat[y_col].values
             cat_gmags = df_cat[mag_col].values
             cat_ids = df_cat[id_col].values if id_col else None
-
             delta_mags = []
             matched_count = 0
 
-            for star in star_records:
-                sx, sy = star.get('x_image'), star.get('y_image')
-                if sx is None or sy is None:
-                    continue
+            # Priority 1: Pixel Coordinate Matching (for GalSim simulation catalogs)
+            if x_col and y_col:
+                cat_x = df_cat[x_col].values
+                cat_y = df_cat[y_col].values
 
-                distances = np.hypot(cat_x - sx, cat_y - sy)
-                min_idx = np.argmin(distances)
+                for star in star_records:
+                    sx, sy = star.get('x_image'), star.get('y_image')
+                    if sx is None or sy is None:
+                        continue
 
-                if distances[min_idx] <= max_radius_px:
-                    true_gmag = cat_gmags[min_idx]
-                    inst_mag = star['flux_mag']
-                    delta_mags.append(true_gmag - inst_mag)
-                    
-                    if cat_ids is not None:
-                        star['star_id'] = str(cat_ids[min_idx])
-                    matched_count += 1
+                    distances = np.hypot(cat_x - sx, cat_y - sy)
+                    min_idx = np.argmin(distances)
+
+                    if distances[min_idx] <= match_threshold:  # pixel tolerance (e.g. 5 pixels)
+                        true_gmag = cat_gmags[min_idx]
+                        inst_mag = star['flux_mag']
+                        delta_mags.append(true_gmag - inst_mag)
+                        
+                        if cat_ids is not None:
+                            star['star_id'] = str(cat_ids[min_idx])
+                        matched_count += 1
+
+            # Priority 2: Celestial Coordinate Matching (for Gaia DR3 catalogs)
+            elif ra_col and dec_col:
+                cat_ras = df_cat[ra_col].values
+                cat_decs = df_cat[dec_col].values
+
+                for star in star_records:
+                    s_ra, s_dec = star.get('ra'), star.get('dec')
+                    if s_ra in (None, "NA") or s_dec in (None, "NA"):
+                        continue
+                    try:
+                        s_ra, s_dec = float(s_ra), float(s_dec)
+                    except ValueError:
+                        continue
+
+                    cos_dec = np.cos(np.radians(s_dec))
+                    d_ra = (cat_ras - s_ra) * cos_dec * 3600.0  # arcsec
+                    d_dec = (cat_decs - s_dec) * 3600.0         # arcsec
+                    angular_distances = np.hypot(d_ra, d_dec)
+                    min_idx = np.argmin(angular_distances)
+
+                    if angular_distances[min_idx] <= 30.0:  # arcsec tolerance
+                        true_gmag = cat_gmags[min_idx]
+                        inst_mag = star['flux_mag']
+                        delta_mags.append(true_gmag - inst_mag)
+                        
+                        if cat_ids is not None:
+                            star['star_id'] = str(cat_ids[min_idx])
+                        matched_count += 1
+            else:
+                self.log_debug(f"Reference catalog coordinate columns not recognized. Found: {list(df_cat.columns)}", "WARN")
+                return star_records
 
             if len(delta_mags) >= 1:
                 zp_offset = float(np.median(delta_mags))
                 for star in star_records:
                     star['flux_mag'] = round(star['flux_mag'] + zp_offset, 3)
                 self.log_debug(
-                    f"Catalog Photometric Calibration (Pixel Match): Matched <b>{matched_count}/{len(star_records)} stars</b> | "
-                    f"ZP Offset: <b>{zp_offset:+.3f} mag</b>", 
+                    f"Catalog Photometric Calibration: Matched <b>{matched_count}/{len(star_records)} stars</b> | "
+                    f"ZP Offset (Δm): <b>{zp_offset:+.3f} mag</b>", 
                     "SUCCESS"
                 )
             else:
-                self.log_debug("Catalog calibration: 0 spatial pixel matches found between catalog and frame stars.", "WARN")
+                self.log_debug("Catalog calibration: 0 matches found within threshold.", "WARN")
 
         except Exception as e:
             self.log_debug(f"Catalog calibration exception: {e}", "ERROR")
@@ -489,6 +528,16 @@ class AstapFUSExtractor(QMainWindow):
             except Exception as e:
                 self.log_debug(f"Failed parsing ASTAP INI: {e}", "ERROR")
 
+        # Load WCS directly from the FITS file header updated by ASTAP (-update)
+        wcs_obj = None
+        try:
+            with fits.open(norm_fits_path, mode='readonly') as hdul:
+                wcs_obj = WCS(hdul[0].header)
+                if not wcs_obj.is_celestial:
+                    wcs_obj = None
+        except Exception:
+            wcs_obj = None
+
         if os.path.exists(astap_csv_path):
             solution['raw_csv_path'] = astap_csv_path
             try:
@@ -498,8 +547,16 @@ class AstapFUSExtractor(QMainWindow):
                     try:
                         cx = float(row.iloc[0])
                         cy = float(row.iloc[1])
-                        s_flux = float(row.iloc[4]) if len(row) > 2 else 15.0
+                        s_flux = float(row.iloc[4]) if len(row) > 4 else 15.0
                         
+                        s_ra = solution.get('ra', 0.0)
+                        s_dec = solution.get('dec', 0.0)
+                        
+                        if wcs_obj is not None:
+                            sky_coord = wcs_obj.pixel_to_world(cx, cy)
+                            s_ra = round(float(sky_coord.ra.deg), 6)
+                            s_dec = round(float(sky_coord.dec.deg), 6)
+
                         star_records.append({
                             'star_id': str(len(star_records) + 1),
                             'x_image': round(cx, 2),
@@ -509,13 +566,13 @@ class AstapFUSExtractor(QMainWindow):
                             'exposure_time': 30.0,
                             'snr': 10.0,
                             'is_artifact': 0,
-                            'ra': solution.get('ra', 0.0),
-                            'dec': solution.get('dec', 0.0)
+                            'ra': s_ra,
+                            'dec': s_dec
                         })
                     except Exception:
                         continue
                 solution['star_records'] = star_records
-                self.log_debug(f"ASTAP Extracted <b>{len(star_records)} native stars</b> via -extract2.", "ASTAP")
+                self.log_debug(f"ASTAP Extracted <b>{len(star_records)} native stars</b> via -extract2 with WCS projection.", "ASTAP")
             except Exception as e:
                 self.log_debug(f"Failed parsing ASTAP star CSV: {e}", "WARN")
 
@@ -809,7 +866,6 @@ class AstapFUSExtractor(QMainWindow):
                     self.log_debug(f"Extracted <b>{len(star_records)} stars</b> using engine: <b>{status_str}</b> | Median SNR: <b>{med_snr}</b>", "SUCCESS")
 
                     if star_records:
-                        # Apply explicit reference catalog magnitude calibration if specified
                         if catalog_path:
                             star_records = self._calibrate_magnitudes_with_catalog(star_records, catalog_path)
 
