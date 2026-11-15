@@ -72,3 +72,19 @@ Compile star RA and DEC extractor
 ```
 pyinstaller --name "Build Massive Star Ledge" --onefile --windowed build_massive_star_ledger.py
 ```
+
+# Portable ASTAP Star Extraction Module
+
+A lightweight, dependency-clean Python module that invokes the external ASTAP command-line interface (CLI) to perform astrometric plate-solving and star extraction. It returns structured telemetry and star records directly as in-memory Python data structures without writing intermediate CSV files to disk.
+
+---
+
+## Prerequisites
+
+1. **ASTAP Binary:** Ensure ASTAP is installed on your system:
+   * **Windows:** `C:\Program Files\astap\astap.exe`
+   * **Linux:** `/usr/bin/astap`
+2. **Star Databases:** Download and place at least one star catalog database (e.g., **D50**, **D80**, or **H18**) directly inside the ASTAP installation directory.
+3. **Python Dependencies:** Install the required packages:
+   ```bash
+   pip install numpy pandas astropy
