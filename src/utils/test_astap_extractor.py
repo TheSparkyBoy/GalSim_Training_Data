@@ -24,6 +24,7 @@ from PyQt5.QtCore import Qt, QSettings
 
 from ASTAP_extraction_function import extract_stars_to_array
 
+
 class AstapFUSExtractor(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -437,20 +438,46 @@ class AstapFUSExtractor(QMainWindow):
         self.log_debug("Initiating Pipeline using Portable ASTAP Extractor Module...", "INFO")
 
         try:
-            # Support both flat directory structures and subfolders (/fits, /png)
+            # Dedicated folders matching fits_extractor_gui.py
             fits_dir = os.path.join(target_dir, "fits")
-            if not os.path.exists(fits_dir):
-                fits_dir = target_dir
-
             csv_dir = os.path.join(target_dir, "csv")
             png_dir = os.path.join(target_dir, "png")
 
+            os.makedirs(fits_dir, exist_ok=True)
             os.makedirs(csv_dir, exist_ok=True)
             os.makedirs(png_dir, exist_ok=True)
 
-            active_files = sorted([f for f in os.listdir(fits_dir) if f.lower().endswith(('.fits', '.fit', '.png'))])
+            # Move any loose FITS/FIT captures in target_dir into the dedicated fits/ folder
+            loose_fits = [
+                f for f in os.listdir(target_dir)
+                if f.lower().endswith(('.fits', '.fit')) and os.path.isfile(os.path.join(target_dir, f))
+            ]
+            if loose_fits:
+                moved_cnt = 0
+                for f in loose_fits:
+                    src = os.path.join(target_dir, f)
+                    dst = os.path.join(fits_dir, f)
+                    if not os.path.exists(dst):
+                        shutil.move(src, dst)
+                        moved_cnt += 1
+                if moved_cnt > 0:
+                    self.log_debug(f"Moved <b>{moved_cnt}</b> FITS capture(s) into dedicated folder: <code>{fits_dir}</code>", "INFO")
+
+            # Scan dedicated fits/ folder for FITS/FIT files, plus any PNGs in fits_dir or target_dir
+            fits_files = sorted([
+                os.path.join(fits_dir, f) for f in os.listdir(fits_dir)
+                if f.lower().endswith(('.fits', '.fit')) and os.path.isfile(os.path.join(fits_dir, f))
+            ])
+            png_files = sorted([
+                os.path.join(base_d, f)
+                for base_d in (fits_dir, target_dir)
+                for f in os.listdir(base_d)
+                if f.lower().endswith('.png') and os.path.isfile(os.path.join(base_d, f))
+            ])
+            active_files = fits_files + png_files
+
             if not active_files:
-                QMessageBox.information(self, "No Files", f"No supported captures (.fits, .fit, .png) found in:\n{target_dir}")
+                QMessageBox.information(self, "No Files", f"No supported captures (.fits, .fit, .png) found in:\n{target_dir}\nor\n{fits_dir}")
                 return
 
             self.telemetry_data = []
@@ -460,13 +487,13 @@ class AstapFUSExtractor(QMainWindow):
             success_cnt, failed_cnt = 0, 0
             dataset_group = os.path.basename(target_dir)
 
-            for idx, filename in enumerate(active_files):
+            for idx, filepath in enumerate(active_files):
+                filename = os.path.basename(filepath)
                 pct = int(((idx + 1) / len(active_files)) * 100)
                 self.progress_bar.setValue(pct)
                 self.progress_bar.setFormat(f"Processing Image {idx + 1} of {len(active_files)} ({pct}%)")
 
                 img_id = os.path.splitext(filename)[0]
-                filepath = os.path.join(fits_dir, filename)
 
                 self.log_debug(f"--- Frame [{idx+1}/{len(active_files)}]: {filename} ---", "INFO")
 
@@ -505,7 +532,7 @@ class AstapFUSExtractor(QMainWindow):
                             except (TypeError, ValueError):
                                 pix_size = default_pixel_size
                             if pix_size <= 0: pix_size = default_pixel_size
-                    else: # PNG support
+                    else:  # PNG support
                         img_gray = cv2.imread(filepath, cv2.IMREAD_GRAYSCALE)
                         if img_gray is not None:
                             img_data = img_gray.astype(np.float32)
@@ -644,7 +671,7 @@ class AstapFUSExtractor(QMainWindow):
                     self, 
                     "Dataset Normalization Complete", 
                     f"Successfully processed {len(active_files)} physical captures!\n\n"
-                    f"• Dataset Directory: {target_dir}\n"
+                    f"• FITS Folder:       {fits_dir}\n"
                     f"• Star Catalogs:     {csv_dir}\n"
                     f"• Verification:      {png_dir}\n"
                     f"• Global Manifest:   {manifest_path}"
@@ -656,6 +683,7 @@ class AstapFUSExtractor(QMainWindow):
         finally:
             self.run_btn.setText("Execute Complete Dataset Ingestion & Star Extraction Pipeline")
             self.run_btn.setEnabled(True)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
